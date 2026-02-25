@@ -546,7 +546,7 @@ pub struct PeerListener {
     listener: TcpListener,
     network: NetworkType,
     our_listen_addr: SocketAddr,
-    blockchain: Option<StdArc<tokio::sync::RwLock<time_core::state::BlockchainState>>>,
+    _blockchain: Option<StdArc<tokio::sync::RwLock<time_core::state::BlockchainState>>>,
 }
 
 impl PeerListener {
@@ -565,7 +565,7 @@ impl PeerListener {
             listener,
             network,
             our_listen_addr: public_addr,
-            blockchain,
+            _blockchain: blockchain,
         })
     }
 
