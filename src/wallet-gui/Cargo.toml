@@ -1,0 +1,67 @@
+[package]
+name = "wallet-gui"
+version = "0.1.0"
+edition = "2021"
+license = "BUSL-1.1"
+
+[dependencies]
+# GUI framework
+eframe = "0.31"
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["image"] }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+serde_bytes = "0.11"
+
+# Cryptography
+sha2 = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+# SECURITY FIX: Add AES-256-GCM encryption for wallet
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# Networking
+reqwest = { workspace = true }
+socket2 = "0.5"
+local-ip-address = { workspace = true }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Date/Time
+chrono = { workspace = true }
+
+# Database
+sled = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# File system utilities
+dirs = "6.0"
+
+# Encoding
+base64 = "0.22"
+
+# QR code rendering (SVG to image)
+resvg = "0.44"
+tiny-skia = "0.11"
+
+# PDF generation (for mnemonic backup)
+printpdf = "0.7"
+
+# Local wallet dependency from parent project
+wallet = { path = "../wallet", version = "0.1.0" }
+time-network = { path = "../network", version = "0.1.0" }
+time-core = { path = "../core", version = "0.1.0" }
+
