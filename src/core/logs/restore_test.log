@@ -1,0 +1,130 @@
+   Compiling time-core v0.1.0 (C:\Users\wmcor\projects\time-coin\core)
+   Compiling wallet v0.1.0 (C:\Users\wmcor\projects\time-coin\wallet)
+   Compiling time-network v0.1.0 (C:\Users\wmcor\projects\time-coin\network)
+   Compiling reqwest v0.12.24
+   Compiling time-cli v0.1.0 (C:\Users\wmcor\projects\time-coin\cli)
+warning: unused import: `std::fs`
+   --> core\src\state.rs:463:9
+    |
+463 |     use std::fs;
+    |         ^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+   Compiling time-mempool v0.1.0 (C:\Users\wmcor\projects\time-coin\mempool)
+   Compiling time-consensus v0.1.0 (C:\Users\wmcor\projects\time-coin\consensus)
+   Compiling time-masternode v0.1.0 (C:\Users\wmcor\projects\time-coin\masternode)
+warning: `time-core` (lib test) generated 1 warning (run `cargo fix --lib -p time-core --tests` to apply 1 suggestion)
+   Compiling time-api v0.1.0 (C:\Users\wmcor\projects\time-coin\api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.58s
+     Running unittests src\lib.rs (target\debug\deps\time_api-b54efda4a6cf9ece.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\time-cli.rs (target\debug\deps\time_cli-5d4f799202d0e817.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\time_node-aac76093e7a483ad.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\time_consensus-5718ff5d6d471fec.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\time_core-2f9dbfa6ae180ece.exe)
+
+running 25 tests
+test block::tests::test_reward_scaling_with_growth ... ok
+test block::tests::test_tier_reward_distribution ... ok
+test block::tests::test_distribute_masternode_rewards ... ok
+test block::tests::test_masternode_tier_collateral ... ok
+test block::tests::test_masternode_tier_weights ... ok
+test block::tests::test_tier_economics ... ok
+test block::tests::test_block_creation ... ok
+test block::tests::test_logarithmic_scaling ... ok
+test checkpoint::tests::test_checkpoint_detection ... ok
+test block::tests::test_treasury_reward ... ok
+test block::tests::test_create_coinbase_transaction ... ok
+test finalizer::tests::test_add_pending_block ... ok
+test finalizer::tests::test_finalizer_creation ... ok
+test mempool::tests::test_mempool_creation ... ok
+test mempool::tests::test_add_transaction ... ok
+test mempool::tests::test_duplicate_transaction ... ok
+test transaction::tests::test_outpoint_equality ... ok
+test transaction::tests::test_transaction_creation ... ok
+test utxo_set::tests::test_get_balance ... ok
+test utxo_set::tests::test_apply_transaction ... ok
+test utxo_set::tests::test_utxo_set_basic_operations ... ok
+test state::tests::test_masternode_registration ... ok
+test state::tests::test_get_balance ... ok
+test state::tests::test_blockchain_initialization ... FAILED
+test state::tests::test_add_block ... FAILED
+
+failures:
+
+---- state::tests::test_blockchain_initialization stdout ----
+
+thread 'state::tests::test_blockchain_initialization' panicked at core\src\state.rs:476:9:
+assertion `left == right` failed
+  left: "42fe08bfb7f3d6b05660df201875f339e273029af001a443031db75e8fe78eaf"
+ right: "b050e0ceb8748feec208209be5c8bd193186ffc2d29e944a645af29aec6b6117"
+stack backtrace:
+   0: std::panicking::begin_panic_handler
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:697
+   1: core::panicking::panic_fmt
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\core\src\panicking.rs:75
+   2: core::panicking::assert_failed_inner
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\core\src\panicking.rs:443
+   3: core::panicking::assert_failed<ref$<str$>,alloc::string::String>
+             at C:\Users\wmcor\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\panicking.rs:403
+   4: time_core::state::tests::test_blockchain_initialization
+             at .\src\state.rs:476
+   5: time_core::state::tests::test_blockchain_initialization::closure$0
+             at .\src\state.rs:471
+   6: core::ops::function::FnOnce::call_once<time_core::state::tests::test_blockchain_initialization::closure_env$0,tuple$<> >
+             at C:\Users\wmcor\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\core\src\ops\function.rs:253
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- state::tests::test_add_block stdout ----
+
+thread 'state::tests::test_add_block' panicked at core\src\state.rs:488:33:
+called `Result::unwrap()` on an `Err` value: OrphanBlock
+stack backtrace:
+   0: std::panicking::begin_panic_handler
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:697
+   1: core::panicking::panic_fmt
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\core\src\panicking.rs:75
+   2: core::result::unwrap_failed
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\core\src\result.rs:1765
+   3: enum2$<core::result::Result<tuple$<>,enum2$<time_core::state::StateError> > >::unwrap
+             at C:\Users\wmcor\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:1167
+   4: time_core::state::tests::test_add_block
+             at .\src\state.rs:488
+   5: time_core::state::tests::test_add_block::closure$0
+             at .\src\state.rs:481
+   6: core::ops::function::FnOnce::call_once<time_core::state::tests::test_add_block::closure_env$0,tuple$<> >
+             at C:\Users\wmcor\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\core\src\ops\function.rs:253
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    state::tests::test_add_block
+    state::tests::test_blockchain_initialization
+
+test result: FAILED. 23 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+error: test failed, to rerun pass `-p time-core --lib`

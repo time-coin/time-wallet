@@ -1,0 +1,42 @@
+   Compiling time-core v0.1.0 (C:\Users\wmcor\projects\time-coin\core)
+warning: unused import: `std::fs`
+   --> core\src\state.rs:463:9
+    |
+463 |     use std::fs;
+    |         ^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: `time-core` (lib test) generated 1 warning (run `cargo fix --lib -p time-core --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.57s
+     Running unittests src\lib.rs (target\debug\deps\time_core-c293ba5382327cfc.exe)
+
+running 25 tests
+test block::tests::test_block_creation ... ok
+test block::tests::test_create_coinbase_transaction ... ok
+test block::tests::test_distribute_masternode_rewards ... ok
+test block::tests::test_logarithmic_scaling ... ok
+test block::tests::test_masternode_tier_collateral ... ok
+test block::tests::test_masternode_tier_weights ... ok
+test block::tests::test_reward_scaling_with_growth ... ok
+test block::tests::test_tier_economics ... ok
+test block::tests::test_tier_reward_distribution ... ok
+test block::tests::test_treasury_reward ... ok
+test checkpoint::tests::test_checkpoint_detection ... ok
+test finalizer::tests::test_add_pending_block ... ok
+test finalizer::tests::test_finalizer_creation ... ok
+test mempool::tests::test_add_transaction ... ok
+test mempool::tests::test_duplicate_transaction ... ok
+test mempool::tests::test_mempool_creation ... ok
+test state::tests::test_add_block ... ok
+test state::tests::test_blockchain_initialization ... ok
+test state::tests::test_get_balance ... ok
+test state::tests::test_masternode_registration ... ok
+test transaction::tests::test_outpoint_equality ... ok
+test transaction::tests::test_transaction_creation ... ok
+test utxo_set::tests::test_apply_transaction ... ok
+test utxo_set::tests::test_get_balance ... ok
+test utxo_set::tests::test_utxo_set_basic_operations ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+

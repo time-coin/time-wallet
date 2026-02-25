@@ -1,0 +1,16 @@
+    Checking wallet v0.1.0 (C:\Users\wmcor\projects\time-coin\wallet)
+error: empty line after doc comment
+  --> wallet\src\address.rs:97:5
+   |
+97 | /     /// Convert address to string
+98 | |
+   | |_^
+99 |       fn format_address(&self) -> String {
+   |       ----------------- the comment documents this function
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#empty_line_after_doc_comments
+   = note: `-D clippy::empty-line-after-doc-comments` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::empty_line_after_doc_comments)]`
+   = help: if the empty line is unintentional, remove it
+
+error: could not compile `wallet` (lib) due to 1 previous error
