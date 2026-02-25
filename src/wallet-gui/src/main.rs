@@ -4220,15 +4220,20 @@ impl WalletApp {
             return;
         }
 
-        // Get the wallet address
-        let address = if let Some(manager) = &self.wallet_manager {
-            match manager.get_primary_address() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    log::warn!("Cannot start WebSocket: no primary address: {}", e);
-                    return;
+        // Derive all wallet addresses for WebSocket subscriptions
+        let addresses = if let Some(manager) = &self.wallet_manager {
+            let mut addrs = Vec::new();
+            for i in 0..20 {
+                match manager.derive_address(i) {
+                    Ok(addr) => addrs.push(addr),
+                    Err(_) => break,
                 }
             }
+            if addrs.is_empty() {
+                log::warn!("Cannot start WebSocket: no addresses derived");
+                return;
+            }
+            addrs
         } else {
             return;
         };
@@ -4256,15 +4261,15 @@ impl WalletApp {
         };
 
         log::info!(
-            "📡 Starting WebSocket client to {} for address {}",
+            "📡 Starting WebSocket client to {} for {} addresses",
             ws_url,
-            address
+            addresses.len()
         );
 
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        ws_client::WsClient::start(ws_url, address, event_tx, shutdown_rx);
+        ws_client::WsClient::start(ws_url, addresses, event_tx, shutdown_rx);
 
         self.ws_event_rx = Some(event_rx);
         self.ws_shutdown_tx = Some(shutdown_tx);
@@ -4514,16 +4519,22 @@ impl WalletApp {
         log::info!("🔄 Manual refresh triggered (thin client)");
         self.refresh_in_progress = true;
 
-        // Get required data
-        let address = if let Some(manager) = &self.wallet_manager {
-            match manager.get_primary_address() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    log::warn!("Failed to get primary address: {}", e);
-                    self.refresh_in_progress = false;
-                    return;
+        // Get required data — derive all wallet addresses for batch query
+        let addresses = if let Some(manager) = &self.wallet_manager {
+            let mut addrs = Vec::new();
+            // Derive addresses 0..20 (receiving) for batch query
+            for i in 0..20 {
+                match manager.derive_address(i) {
+                    Ok(addr) => addrs.push(addr),
+                    Err(_) => break,
                 }
             }
+            if addrs.is_empty() {
+                log::warn!("Failed to derive any addresses");
+                self.refresh_in_progress = false;
+                return;
+            }
+            addrs
         } else {
             log::warn!("No wallet manager available");
             self.refresh_in_progress = false;
@@ -4545,8 +4556,8 @@ impl WalletApp {
         tokio::spawn(async move {
             log::info!("📡 Fetching balance and transactions from masternode...");
 
-            // 1. Get balance (one JSON-RPC call)
-            match masternode_client.get_balance(&address).await {
+            // 1. Get balance across all derived addresses (one JSON-RPC call)
+            match masternode_client.get_balances(&addresses).await {
                 Ok(balance) => {
                     log::info!(
                         "✅ Balance: {} TIME (confirmed: {}, pending: {})",
@@ -4572,7 +4583,8 @@ impl WalletApp {
             }
 
             // 2. Get transactions (one JSON-RPC call)
-            match masternode_client.get_transactions(&address, 100).await {
+            let primary_addr = addresses.first().cloned().unwrap_or_default();
+            match masternode_client.get_transactions(&primary_addr, 100).await {
                 Ok(transactions) => {
                     log::info!(
                         "✅ Received {} transactions from masternode",

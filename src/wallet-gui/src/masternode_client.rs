@@ -149,6 +149,44 @@ impl MasternodeClient {
         Ok(balance)
     }
 
+    /// Get combined balance across multiple addresses (batch query for HD wallets)
+    pub async fn get_balances(&self, addresses: &[String]) -> Result<Balance, ClientError> {
+        let result = self
+            .rpc_call("getbalances", serde_json::json!([addresses]))
+            .await?;
+
+        let balance_time = result
+            .get("balance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let available_time = result
+            .get("available")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let confirmed = (available_time * 100_000_000.0) as u64;
+        let total = (balance_time * 100_000_000.0) as u64;
+
+        let balance = Balance {
+            confirmed,
+            pending: 0,
+            total,
+        };
+
+        let addr_count = result
+            .get("address_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        log::info!(
+            "✅ Batch balance ({} addresses): {} TIME (available: {} TIME)",
+            addr_count,
+            balance_time,
+            available_time
+        );
+        Ok(balance)
+    }
+
     /// Get transaction history
     pub async fn get_transactions(
         &self,

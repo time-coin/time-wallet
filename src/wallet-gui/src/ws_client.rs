@@ -54,11 +54,11 @@ impl WsClient {
     /// Start the WebSocket client in a background task.
     ///
     /// Connects to the masternode's WebSocket server, subscribes to the given
-    /// address, and sends notifications through the event channel.
+    /// addresses, and sends notifications through the event channel.
     /// Automatically reconnects with exponential backoff on disconnect.
     pub fn start(
         ws_url: String,
-        address: String,
+        addresses: Vec<String>,
         event_tx: mpsc::UnboundedSender<WsEvent>,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
@@ -84,7 +84,7 @@ impl WsClient {
 
                         let result = Self::handle_connection(
                             ws_stream,
-                            &address,
+                            &addresses,
                             &event_tx,
                             shutdown.clone(),
                         )
@@ -126,20 +126,22 @@ impl WsClient {
         ws_stream: tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
         >,
-        address: &str,
+        addresses: &[String],
         event_tx: &mpsc::UnboundedSender<WsEvent>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        // Subscribe to our address
-        let subscribe_msg = ClientMessage {
-            method: "subscribe".to_string(),
-            params: serde_json::json!({"address": address}),
-        };
-        let json = serde_json::to_string(&subscribe_msg)?;
-        ws_sender.send(Message::Text(json)).await?;
-        log::info!("📡 Subscribed to address: {}", address);
+        // Subscribe to all wallet addresses
+        for address in addresses {
+            let subscribe_msg = ClientMessage {
+                method: "subscribe".to_string(),
+                params: serde_json::json!({"address": address}),
+            };
+            let json = serde_json::to_string(&subscribe_msg)?;
+            ws_sender.send(Message::Text(json)).await?;
+        }
+        log::info!("📡 Subscribed to {} addresses", addresses.len());
 
         // Heartbeat interval
         let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(25));
