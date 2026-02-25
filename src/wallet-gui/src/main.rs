@@ -8,8 +8,6 @@
 #![allow(non_snake_case)]
 use eframe::egui;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use wallet::NetworkType;
 
@@ -200,10 +198,6 @@ struct WalletApp {
     // Real-time notifications
     recent_notifications: Vec<NotificationToast>,
 
-    // XPub registration tracking
-    registered_masternodes: std::collections::HashSet<String>,
-    xpub_registration_status: XPubRegistrationStatus,
-
     // UTXO management
     utxo_manager: UtxoManager,
 
@@ -211,27 +205,6 @@ struct WalletApp {
     ws_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<ws_client::WsEvent>>,
     ws_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     ws_connected: bool,
-}
-
-/// XPub registration status across masternodes
-#[derive(Debug, Clone, PartialEq)]
-enum XPubRegistrationStatus {
-    NotRegistered,
-    Registering,
-    Registered {
-        count: usize,
-        last_registered: std::time::Instant,
-    },
-    PartiallyRegistered {
-        registered: usize,
-        total: usize,
-    },
-}
-
-impl Default for XPubRegistrationStatus {
-    fn default() -> Self {
-        XPubRegistrationStatus::NotRegistered
-    }
 }
 
 /// Toast notification for real-time events
@@ -391,8 +364,6 @@ impl Default for WalletApp {
             utxo_rx: None,
             tx_notification_rx: None,
             recent_notifications: Vec::new(),
-            registered_masternodes: std::collections::HashSet::new(),
-            xpub_registration_status: XPubRegistrationStatus::default(),
             utxo_manager: UtxoManager::new(),
             ws_event_rx: None,
             ws_shutdown_tx: None,
@@ -1056,97 +1027,7 @@ impl WalletApp {
                                                     *net = temp_net;
                                                 }
 
-                                                // Blockchain scanning happens automatically when xpub is registered via TCP
-                                                // The masternode will scan and send UTXOs via UtxoUpdate message
-                                                log::info!("🔄 Blockchain scanning initiated via xpub registration");
-
-                                                // Register xpub with all connected peers for ongoing transaction updates
-                                                {
-                                                    let xpub_for_reg = xpub.clone();
-                                                    let network_type = NetworkType::Mainnet; // TODO: Make this configurable
-                                                    let connected_peers = {
-                                                        let net = network_mgr.read().unwrap();
-                                                        net.get_connected_peers()
-                                                    };
-
-                                                    for peer in connected_peers {
-                                                        let xpub_clone = xpub_for_reg.clone();
-                                                        let peer_addr = peer.address.clone();
-
-                                                        tokio::spawn(async move {
-                                                            log::info!("📡 Registering xpub with peer {}...", peer_addr);
-
-                                                            let peer_ip = peer_addr.split(':').next().unwrap_or(&peer_addr);
-                                                            let port = if network_type == NetworkType::Testnet { 24100 } else { 24101 };
-                                                            let tcp_addr = format!("{}:{}", peer_ip, port);
-
-                                                            // Connect and send RegisterXpub message
-                                                            match TcpStream::connect(&tcp_addr).await {
-                                                                Ok(mut stream) => {
-                                                                    // Perform handshake first
-                                                                    let handshake = time_network::protocol::HandshakeMessage::new(
-                                                                        if network_type == NetworkType::Testnet {
-                                                                            time_network::discovery::NetworkType::Testnet
-                                                                        } else {
-                                                                            time_network::discovery::NetworkType::Mainnet
-                                                                        },
-                                                                        "0.0.0.0:0".parse().unwrap()
-                                                                    );
-                                                                    let magic = if network_type == NetworkType::Testnet {
-                                                                        time_network::discovery::NetworkType::Testnet.magic_bytes()
-                                                                    } else {
-                                                                        time_network::discovery::NetworkType::Mainnet.magic_bytes()
-                                                                    };
-
-                                                                    if let Ok(handshake_json) = serde_json::to_vec(&handshake) {
-                                                                        let handshake_len = handshake_json.len() as u32;
-                                                                        if stream.write_all(&magic).await.is_ok() &&
-                                                                           stream.write_all(&handshake_len.to_be_bytes()).await.is_ok() &&
-                                                                           stream.write_all(&handshake_json).await.is_ok() &&
-                                                                           stream.flush().await.is_ok() {
-
-                                                                            // Read their handshake
-                                                                            let mut their_magic = [0u8; 4];
-                                                                            let mut their_len = [0u8; 4];
-                                                                            if stream.read_exact(&mut their_magic).await.is_ok() &&
-                                                                               their_magic == magic &&
-                                                                               stream.read_exact(&mut their_len).await.is_ok() {
-                                                                                let len = u32::from_be_bytes(their_len) as usize;
-                                                                                if len < 10 * 1024 {
-                                                                                    let mut their_handshake = vec![0u8; len];
-                                                                                    let _ = stream.read_exact(&mut their_handshake).await;
-
-                                                                                    // Now send actual message
-                                                                                    let msg = time_network::protocol::NetworkMessage::RegisterXpub {
-                                                                                        xpub: xpub_clone
-                                                                                    };
-
-                                                                                    // Serialize with JSON (not bincode!)
-                                                                                    match serde_json::to_vec(&msg) {
-                                                                                        Ok(bytes) => {
-                                                                                            let msg_len = bytes.len() as u32;
-                                                                                            if stream.write_all(&msg_len.to_be_bytes()).await.is_ok() &&
-                                                                                               stream.write_all(&bytes).await.is_ok() {
-                                                                                                log::info!("✅ Successfully registered xpub with {}", peer_addr);
-                                                                                            } else {
-                                                                                                log::warn!("❌ Failed to send xpub to {}", peer_addr);
-                                                                                            }
-                                                                                        }
-                                                                                        Err(e) => log::warn!("❌ Failed to serialize xpub message: {}", e),
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                                Err(e) => log::warn!("❌ Failed to connect to {}: {}", peer_addr, e),
-                                                            }
-                                                        });
-                                                    }
-                                                }
-
-                                                // TCP listener removed - using JSON-RPC polling instead
-                                                log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
+                                                log::info!("📡 Using JSON-RPC + WebSocket for wallet updates");
 
                                                 // Trigger initial transaction sync
                                                 ctx_clone.request_repaint();
@@ -4002,51 +3883,6 @@ impl WalletApp {
                         .ok();
                         log::info!("Connection task completed");
 
-                        // Register XPub with masternodes now that peers are connected
-                        if let Some(xpub_str) = xpub_for_task.clone() {
-                            log::info!("📝 Registering wallet with masternodes");
-                            log::info!(
-                                "   xPub: {}...",
-                                &xpub_str[..std::cmp::min(20, xpub_str.len())]
-                            );
-
-                            let peers = {
-                                let net = network_mgr.read().unwrap();
-                                net.get_connected_peers()
-                            };
-
-                            let peer_count = peers.len();
-                            log::info!("✅ Wallet registered with {} masternodes", peer_count);
-
-                            // Send registration to each peer
-                            for peer in &peers {
-                                let xpub_clone = xpub_str.clone();
-                                let peer_addr = format!("{}:{}", peer.address, peer.port);
-
-                                tokio::spawn(async move {
-                                    match Self::register_with_peer(peer_addr.clone(), xpub_clone)
-                                        .await
-                                    {
-                                        Ok(_) => {
-                                            log::info!(
-                                                "✅ Registered xPub with masternode: {}",
-                                                peer_addr
-                                            );
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
-                                                "⚠️ Failed to register with {}: {}",
-                                                peer_addr,
-                                                e
-                                            );
-                                        }
-                                    }
-                                });
-                            }
-                        } else {
-                            log::warn!("⚠️ No xPub available for registration");
-                        }
-
                         // Start periodic latency refresh
                         let network_mgr_for_ping = network_mgr.clone();
                         tokio::task::spawn_blocking(move || {
@@ -4086,138 +3922,6 @@ impl WalletApp {
     fn set_error(&mut self, msg: String) {
         self.error_message = Some(msg);
         self.error_message_time = Some(std::time::Instant::now());
-    }
-
-    /// Register wallet xPub with masternodes for transaction monitoring
-    fn register_wallet_with_masternodes(&self) {
-        if let Some(wallet_mgr) = &self.wallet_manager {
-            let xpub = wallet_mgr.get_xpub();
-            log::info!("📝 Registering wallet with masternodes");
-            log::info!("   xPub: {}...", &xpub[..std::cmp::min(20, xpub.len())]);
-
-            if let Some(network_mgr) = &self.network_manager {
-                let peers = {
-                    let net = network_mgr.read().unwrap();
-                    net.get_connected_peers()
-                };
-
-                let xpub_string = xpub.to_string();
-                let peer_count = peers.len();
-
-                // Send registration asynchronously to each masternode
-                for peer in &peers {
-                    let xpub_str = xpub_string.clone();
-                    let peer_addr = format!("{}:{}", peer.address, peer.port);
-
-                    tokio::spawn(async move {
-                        match Self::register_with_peer(peer_addr.clone(), xpub_str).await {
-                            Ok(_) => {
-                                log::info!("✅ Registered xPub with masternode: {}", peer_addr);
-                            }
-                            Err(e) => {
-                                log::warn!("⚠️ Failed to register with {}: {}", peer_addr, e);
-                            }
-                        }
-                    });
-                }
-
-                log::info!("✅ Sent registration to {} masternodes", peer_count);
-            } else {
-                log::warn!("⚠️ Network manager not available for registration");
-            }
-        }
-    }
-
-    /// Send registration message to a single peer
-    async fn register_with_peer(peer_addr: String, xpub: String) -> Result<(), String> {
-        use time_network::protocol::{HandshakeMessage, NetworkMessage};
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        // Connect to peer
-        let mut stream = tokio::net::TcpStream::connect(&peer_addr)
-            .await
-            .map_err(|e| format!("Connection failed: {}", e))?;
-
-        // Send handshake
-        let handshake = HandshakeMessage {
-            version: time_network::protocol::version_for_handshake(),
-            commit_date: Some(time_network::protocol::GIT_COMMIT_DATE.to_string()),
-            commit_count: Some(time_network::protocol::GIT_COMMIT_COUNT.to_string()),
-            protocol_version: 1,
-            network: time_network::discovery::NetworkType::Testnet,
-            listen_addr: "0.0.0.0:0".parse().unwrap(), // Wallet doesn't listen
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            capabilities: vec!["wallet".to_string()],
-            wallet_address: None,
-            genesis_hash: None, // Wallet doesn't need to validate genesis
-        };
-
-        let handshake_bytes = bincode::serialize(&handshake)
-            .map_err(|e| format!("Handshake serialization failed: {}", e))?;
-        stream
-            .write_u32(handshake_bytes.len() as u32)
-            .await
-            .map_err(|e| format!("Failed to write handshake length: {}", e))?;
-        stream
-            .write_all(&handshake_bytes)
-            .await
-            .map_err(|e| format!("Failed to write handshake: {}", e))?;
-
-        // Read handshake response
-        let response_len = stream
-            .read_u32()
-            .await
-            .map_err(|e| format!("Failed to read handshake response length: {}", e))?
-            as usize;
-        let mut response_buf = vec![0u8; response_len];
-        stream
-            .read_exact(&mut response_buf)
-            .await
-            .map_err(|e| format!("Failed to read handshake response: {}", e))?;
-
-        // Send registration message
-        let msg = NetworkMessage::RegisterXpub { xpub };
-        let msg_bytes =
-            bincode::serialize(&msg).map_err(|e| format!("Message serialization failed: {}", e))?;
-        stream
-            .write_u32(msg_bytes.len() as u32)
-            .await
-            .map_err(|e| format!("Failed to write message length: {}", e))?;
-        stream
-            .write_all(&msg_bytes)
-            .await
-            .map_err(|e| format!("Failed to write message: {}", e))?;
-
-        // Wait for confirmation (with timeout)
-        match tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            let len = stream.read_u32().await? as usize;
-            let mut buf = vec![0u8; len];
-            stream.read_exact(&mut buf).await?;
-            let response: NetworkMessage = bincode::deserialize(&buf)?;
-            Ok::<_, Box<dyn std::error::Error>>(response)
-        })
-        .await
-        {
-            Ok(Ok(NetworkMessage::XpubRegistered { success, message })) => {
-                if success {
-                    Ok(())
-                } else {
-                    Err(format!("Registration failed: {}", message))
-                }
-            }
-            Ok(Ok(_)) => Err("Unexpected response".to_string()),
-            Ok(Err(e)) => Err(format!("Protocol error: {}", e)),
-            Err(_) => Err("Timeout waiting for response".to_string()),
-        }
-    }
-
-    /// Initialize TIME Coin Protocol client for real-time transaction notifications
-    fn initialize_tcp_listener(&mut self, _xpub: String) {
-        // TCP listener removed - using JSON-RPC polling instead
-        log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
     }
 
     /// Start WebSocket client for real-time transaction notifications
@@ -4777,18 +4481,17 @@ impl WalletApp {
         }
     }
 
-    /// Show peers and XPub registration status screen
+    /// Show peers and connection status screen
     fn show_peers_screen(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("📡 Masternode Connections");
         ui.add_space(10.0);
 
-        // XPub Registration Status Panel
+        // Connection Status Panel
         ui.group(|ui| {
             ui.horizontal(|ui| {
-                ui.strong("XPub Registration Status:");
+                ui.strong("Connection Status:");
                 ui.add_space(10.0);
 
-                // Determine registration status from wallet and network state
                 let (status_text, status_color) = if self.wallet_manager.is_some() {
                     if let Some(network_mgr) = self.network_manager.as_ref() {
                         let mgr = network_mgr.read().unwrap();
@@ -4797,10 +4500,9 @@ impl WalletApp {
                         if peer_count == 0 {
                             ("❌ No Masternodes Connected", egui::Color32::GRAY)
                         } else {
-                            // Assume registered if we have peers and wallet
                             (
                                 &format!(
-                                    "✅ Monitoring {} Masternode{}",
+                                    "✅ Connected to {} Masternode{}",
                                     peer_count,
                                     if peer_count == 1 { "" } else { "s" }
                                 ) as &str,
@@ -4817,22 +4519,28 @@ impl WalletApp {
                 ui.colored_label(status_color, status_text);
             });
 
-            ui.add_space(5.0);
-
-            // Show XPub if wallet is loaded
-            if let Some(wallet_mgr) = &self.wallet_manager {
-                let xpub = wallet_mgr.get_xpub();
-                let xpub_display = if xpub.len() > 40 {
-                    format!("{}...{}", &xpub[..20], &xpub[xpub.len() - 15..])
+            // WebSocket status
+            ui.horizontal(|ui| {
+                ui.strong("WebSocket:");
+                ui.add_space(10.0);
+                if self.ws_connected {
+                    ui.colored_label(egui::Color32::GREEN, "✅ Real-time notifications active");
+                } else if self.ws_event_rx.is_some() {
+                    ui.colored_label(egui::Color32::YELLOW, "⏳ Connecting...");
                 } else {
-                    xpub.to_string()
-                };
+                    ui.colored_label(egui::Color32::GRAY, "❌ Not started");
+                }
+            });
 
-                ui.horizontal(|ui| {
-                    ui.label("XPub:");
-                    ui.add_space(5.0);
-                    ui.label(egui::RichText::new(xpub_display).monospace().small());
-                });
+            // Primary address
+            if let Some(wallet_mgr) = &self.wallet_manager {
+                if let Ok(addr) = wallet_mgr.get_primary_address() {
+                    ui.horizontal(|ui| {
+                        ui.label("Address:");
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new(&addr).monospace().small());
+                    });
+                }
             }
         });
 
@@ -4873,7 +4581,6 @@ impl WalletApp {
                             ui.strong("Port");
                             ui.strong("Latency");
                             ui.strong("Version");
-                            ui.strong("XPub Status");
                             ui.end_row();
 
                             for peer in peers {
@@ -4903,12 +4610,6 @@ impl WalletApp {
 
                                 // Version
                                 ui.label(peer.version.as_ref().unwrap_or(&"unknown".to_string()));
-
-                                // XPub Registration Status
-                                let peer_key = format!("{}:{}", peer.address, peer.port);
-                                // For now, assume all connected peers have xpub registered
-                                // (actual registration happens via TCP listener)
-                                ui.colored_label(egui::Color32::GREEN, "✅ Active");
 
                                 ui.end_row();
                             }
