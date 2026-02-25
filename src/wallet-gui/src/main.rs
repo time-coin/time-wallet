@@ -71,7 +71,7 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "TIME Coin Wallet",
         options,
         Box::new(|cc| {
@@ -79,7 +79,14 @@ fn main() -> Result<(), eframe::Error> {
             setup_emoji_fonts(&cc.egui_ctx);
             Ok(Box::new(WalletApp::default()))
         }),
-    )
+    );
+
+    // Gracefully shut down the Tokio runtime so background tasks
+    // don't panic when the context disappears.
+    drop(_guard);
+    rt.shutdown_timeout(std::time::Duration::from_secs(2));
+
+    result
 }
 
 /// Setup fonts to support emoji rendering
