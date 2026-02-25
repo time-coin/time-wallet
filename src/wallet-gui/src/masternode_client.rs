@@ -187,16 +187,39 @@ impl MasternodeClient {
         Ok(balance)
     }
 
-    /// Get transaction history
+    /// Get transaction history for a single address
     pub async fn get_transactions(
         &self,
-        _address: &str,
+        address: &str,
         limit: u32,
     ) -> Result<Vec<TransactionRecord>, ClientError> {
         let result = self
-            .rpc_call("listtransactions", serde_json::json!([limit]))
+            .rpc_call("listtransactions", serde_json::json!([address, limit]))
             .await?;
 
+        Self::parse_transaction_list(result)
+    }
+
+    /// Get transaction history across multiple addresses (batch query for HD wallets)
+    pub async fn get_transactions_multi(
+        &self,
+        addresses: &[String],
+        limit: u32,
+    ) -> Result<Vec<TransactionRecord>, ClientError> {
+        let result = self
+            .rpc_call(
+                "listtransactionsmulti",
+                serde_json::json!([addresses, limit]),
+            )
+            .await?;
+
+        Self::parse_transaction_list(result)
+    }
+
+    /// Parse a JSON array of transaction objects into TransactionRecords
+    fn parse_transaction_list(
+        result: serde_json::Value,
+    ) -> Result<Vec<TransactionRecord>, ClientError> {
         let txs: Vec<serde_json::Value> = serde_json::from_value(result).unwrap_or_default();
 
         let records: Vec<TransactionRecord> = txs

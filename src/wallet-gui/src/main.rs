@@ -4293,9 +4293,11 @@ impl WalletApp {
                 }
             }
 
-            // 2. Get transactions (one JSON-RPC call)
-            let primary_addr = addresses.first().cloned().unwrap_or_default();
-            match masternode_client.get_transactions(&primary_addr, 100).await {
+            // 2. Get transactions for all wallet addresses (batch query)
+            match masternode_client
+                .get_transactions_multi(&addresses, 1000)
+                .await
+            {
                 Ok(transactions) => {
                     log::info!(
                         "✅ Received {} transactions from masternode",
