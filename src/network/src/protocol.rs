@@ -125,9 +125,9 @@ pub mod magic_bytes {
     /// Represents the frozen time concept of 24-hour blocks
     pub const MAINNET: [u8; 4] = [0xC0, 0x1D, 0x7E, 0x4D];
 
-    /// Testnet magic bytes: 0x7E577E4D ("TEST TIME" mnemonic - 7E 57 7E 4D)
-    /// Distinct from mainnet to prevent accidental cross-network messages
-    pub const TESTNET: [u8; 4] = [0x7E, 0x57, 0x7E, 0x4D];
+    /// Testnet magic bytes: 0x54494D45 ("TIME" in ASCII)
+    /// Matches the masternode's testnet magic bytes
+    pub const TESTNET: [u8; 4] = [0x54, 0x49, 0x4D, 0x45];
 }
 
 impl crate::discovery::NetworkType {

@@ -761,16 +761,11 @@ impl WalletApp {
                                 }
                             };
 
-                            if let Some(addr) = peer_addr {
-                                log::info!("🔗 Starting TCP listener for {}", addr);
-                                let listener = tcp_protocol_client::TcpProtocolListener::new(
-                                    addr.clone(),
-                                    wallet_xpub_clone.clone(),
-                                    utxo_tx,
-                                    tx_notif_tx,
-                                );
-
-                                listener.start().await;
+                            if let Some(_addr) = peer_addr {
+                                // TCP listener removed - using JSON-RPC polling instead
+                                log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
+                                let _ = utxo_tx;
+                                let _ = tx_notif_tx;
                             } else {
                                 log::warn!("❌ No peers available for TCP listener");
                             }
@@ -1131,36 +1126,8 @@ impl WalletApp {
                                                     }
                                                 }
 
-                                                // Initialize TCP listener NOW that peers are connected
-                                                log::info!("🔌 Initializing TCP listener for real-time notifications...");
-                                                let tcp_xpub = xpub_for_tcp.clone();
-                                                let tcp_network_mgr = network_mgr.clone();
-                                                tokio::spawn(async move {
-                                                    // Get first available peer
-                                                    let peer_addr = {
-                                                        let net = tcp_network_mgr.read().unwrap();
-                                                        let peers = net.get_connected_peers();
-                                                        if let Some(peer) = peers.first() {
-                                                            let peer_ip = peer.address.split(':').next().unwrap_or(&peer.address);
-                                                            Some(format!("{}:24100", peer_ip))
-                                                        } else {
-                                                            None
-                                                        }
-                                                    };
-
-                                                    if let Some(addr) = peer_addr {
-                                                        log::info!("🔗 Starting TCP listener for {}", addr);
-                                                        let listener = tcp_protocol_client::TcpProtocolListener::new(
-                                                            addr,
-                                                            tcp_xpub,
-                                                            utxo_tx,
-                                                            tx_notif_tx,
-                                                        );
-                                                        listener.start().await;
-                                                    } else {
-                                                        log::warn!("❌ No peers available for TCP listener");
-                                                    }
-                                                });
+                                                // TCP listener removed - using JSON-RPC polling instead
+                                                log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
 
                                                 // Trigger initial transaction sync
                                                 ctx_clone.request_repaint();
@@ -1259,39 +1226,11 @@ impl WalletApp {
 
                                         log::info!("✅ Notification channels created");
 
-                                        // Start TCP listener for this wallet
-                                        if let Some(network_mgr) = &self.network_manager {
-                                            let network_mgr_clone = network_mgr.clone();
-                                            let xpub_for_listener = wallet_xpub.clone();
-                                            tokio::spawn(async move {
-                                                // Wait for network to be ready
-                                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-                                                let peer_addr = {
-                                                    let net = network_mgr_clone.write().unwrap();
-                                                    let peers = net.get_connected_peers();
-                                                    if let Some(peer) = peers.first() {
-                                                        let peer_ip = peer.address.split(':').next().unwrap_or(&peer.address);
-                                                        Some(format!("{}:24100", peer_ip))
-                                                    } else {
-                                                        None
-                                                    }
-                                                };
-
-                                                if let Some(addr) = peer_addr {
-                                                    log::info!("🔗 Starting TCP listener for password-unlocked wallet at {}", addr);
-                                                    let listener = tcp_protocol_client::TcpProtocolListener::new(
-                                                        addr,
-                                                        xpub_for_listener,
-                                                        utxo_tx,
-                                                        tx_notif_tx,
-                                                    );
-                                                    listener.start().await;
-                                                } else {
-                                                    log::warn!("❌ No peers available for TCP listener");
-                                                }
-                                            });
-                                        }
+                                        // TCP listener removed - using JSON-RPC polling instead
+                                        log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
+                                        // Drop unused channels
+                                        let _ = utxo_tx;
+                                        let _ = tx_notif_tx;
                                     }
 
                                     // Initialize network after unlock if not already done
@@ -4255,118 +4194,15 @@ impl WalletApp {
     }
 
     /// Initialize TIME Coin Protocol client for real-time transaction notifications
-    fn initialize_tcp_listener(&mut self, xpub: String) {
-        log::info!("🔌 Initializing TCP listener for xpub monitoring");
-        log::info!("   xPub: {}...", &xpub[..std::cmp::min(20, xpub.len())]);
-
-        let (utxo_tx, utxo_rx) = tokio::sync::mpsc::unbounded_channel();
-        self.utxo_rx = Some(utxo_rx);
-
-        // Get peer address
-        if let Some(network_mgr) = &self.network_manager {
-            let peers = {
-                let net = network_mgr.read().unwrap();
-                net.get_connected_peers()
-            };
-
-            log::info!("   Available peers: {}", peers.len());
-
-            if let Some(peer) = peers.first() {
-                let peer_ip = peer.address.split(':').next().unwrap_or(&peer.address);
-                let peer_addr = format!("{}:24100", peer_ip); // TCP port
-
-                log::info!("🔗 Connecting TCP listener to {}", peer_addr);
-
-                tokio::spawn(async move {
-                    let (tx_notif_tx, _tx_notif_rx) = tokio::sync::mpsc::unbounded_channel();
-                    let listener = tcp_protocol_client::TcpProtocolListener::new(
-                        peer_addr,
-                        xpub,
-                        utxo_tx,
-                        tx_notif_tx,
-                    );
-
-                    listener.start().await;
-                });
-            } else {
-                log::warn!("❌ No peers available for TCP listener - wallet will not receive notifications!");
-            }
-        } else {
-            log::warn!(
-                "❌ Network manager not initialized - wallet will not receive notifications!"
-            );
-        }
+    fn initialize_tcp_listener(&mut self, _xpub: String) {
+        // TCP listener removed - using JSON-RPC polling instead
+        log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
     }
 
     /// Scan blockchain for wallet transactions on startup
-    fn scan_blockchain_for_wallet(&mut self, xpub: String) {
-        log::info!("🔍 Starting blockchain scan for wallet...");
-
-        if let Some(network_mgr) = &self.network_manager {
-            let peers = {
-                let net = network_mgr.read().unwrap();
-                net.get_connected_peers()
-            };
-
-            if let Some(peer) = peers.first() {
-                let peer_ip = peer.address.split(':').next().unwrap_or(&peer.address);
-                let peer_addr = format!("{}:24100", peer_ip);
-
-                log::info!("📡 Requesting wallet transactions from {}...", peer_addr);
-
-                let wallet_db = self.wallet_db.clone();
-                let network = self.network;
-
-                tokio::spawn(async move {
-                    let client = protocol_client::ProtocolClient::new(peer_addr.clone(), network);
-
-                    match client.request_wallet_transactions(xpub.clone()) {
-                        Ok(response) => {
-                            log::info!(
-                                "✅ Received {} transactions (synced to block {})",
-                                response.transactions.len(),
-                                response.last_synced_height
-                            );
-
-                            if let Some(db) = wallet_db {
-                                // Clear existing UTXOs first
-                                if let Err(e) = db.clear_all_utxos() {
-                                    log::error!("Failed to clear UTXOs: {}", e);
-                                    return;
-                                }
-
-                                // Add all UTXOs from transactions
-                                for tx in &response.transactions {
-                                    // Create UTXO record for each transaction output
-                                    let utxo = crate::wallet_db::UtxoRecord {
-                                        tx_hash: tx.tx_hash.clone(),
-                                        output_index: 0, // Simplified - actual index should come from transaction
-                                        address: tx.to_address.clone(),
-                                        amount: tx.amount,
-                                        block_height: tx.block_height,
-                                        confirmations: tx.confirmations as u64,
-                                    };
-
-                                    if let Err(e) = db.save_utxo(&utxo) {
-                                        log::error!("Failed to save UTXO: {}", e);
-                                    }
-                                }
-
-                                log::info!(
-                                    "💾 Saved {} transactions to wallet database",
-                                    response.transactions.len()
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("❌ Failed to request wallet transactions: {}", e);
-                        }
-                    }
-                });
-            } else {
-                log::warn!("⚠️ No peers available - cannot scan blockchain");
-            }
-        }
+    fn scan_blockchain_for_wallet(&mut self, _xpub: String) {
+        // Blockchain scanning via TCP protocol removed - using JSON-RPC polling instead
+        log::info!("📡 Transaction scanning handled by JSON-RPC polling (TCP protocol deprecated)");
     }
 
     fn check_utxo_updates(&mut self) {
@@ -4566,8 +4402,15 @@ impl WalletApp {
         self.refresh_in_progress = true;
 
         // Get required data
-        let xpub = if let Some(manager) = &self.wallet_manager {
-            manager.get_xpub().to_string()
+        let address = if let Some(manager) = &self.wallet_manager {
+            match manager.get_primary_address() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    log::warn!("Failed to get primary address: {}", e);
+                    self.refresh_in_progress = false;
+                    return;
+                }
+            }
         } else {
             log::warn!("No wallet manager available");
             self.refresh_in_progress = false;
@@ -4589,8 +4432,8 @@ impl WalletApp {
         tokio::spawn(async move {
             log::info!("📡 Fetching balance and transactions from masternode...");
 
-            // 1. Get balance (one HTTP call)
-            match masternode_client.get_balance(&xpub).await {
+            // 1. Get balance (one JSON-RPC call)
+            match masternode_client.get_balance(&address).await {
                 Ok(balance) => {
                     log::info!(
                         "✅ Balance: {} TIME (confirmed: {}, pending: {})",
@@ -4615,8 +4458,8 @@ impl WalletApp {
                 }
             }
 
-            // 2. Get transactions (one HTTP call)
-            match masternode_client.get_transactions(&xpub, 100).await {
+            // 2. Get transactions (one JSON-RPC call)
+            match masternode_client.get_transactions(&address, 100).await {
                 Ok(transactions) => {
                     log::info!(
                         "✅ Received {} transactions from masternode",

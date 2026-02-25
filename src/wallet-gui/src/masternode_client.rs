@@ -1,30 +1,56 @@
-//! Masternode client with TCP primary and HTTP fallback
+//! Masternode JSON-RPC client
 //!
-//! This is a thin client that delegates all blockchain operations to masternodes.
-//! The wallet only handles key management and transaction signing locally.
-//!
-//! Protocol priority:
-//! 1. Try TCP (faster, lower overhead)
-//! 2. Fallback to HTTP on TCP failure
+//! Communicates with masternodes using JSON-RPC 2.0 over HTTP.
+//! The masternode exposes an axum-based HTTP server on the RPC port
+//! (24101 for testnet, 24001 for mainnet).
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+
+static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct MasternodeClient {
-    tcp_endpoint: String,
-    http_endpoint: String,
+    rpc_endpoint: String,
     client: Client,
-    prefer_tcp: bool,
+}
+
+/// JSON-RPC 2.0 request
+#[derive(Debug, Serialize)]
+struct JsonRpcRequest {
+    jsonrpc: &'static str,
+    id: String,
+    method: String,
+    params: serde_json::Value,
+}
+
+/// JSON-RPC 2.0 response
+#[derive(Debug, Deserialize)]
+struct JsonRpcResponse {
+    #[allow(dead_code)]
+    jsonrpc: Option<String>,
+    #[allow(dead_code)]
+    id: Option<serde_json::Value>,
+    result: Option<serde_json::Value>,
+    error: Option<JsonRpcError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonRpcError {
+    code: i64,
+    message: String,
 }
 
 impl MasternodeClient {
     pub fn new(endpoint: String) -> Self {
-        // Parse endpoint to create both TCP and HTTP versions
-        let (tcp_endpoint, http_endpoint) = Self::parse_endpoint(&endpoint);
+        // Ensure endpoint is an HTTP URL pointing to the RPC port
+        let rpc_endpoint = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+            endpoint
+        } else {
+            format!("http://{}", endpoint)
+        };
 
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -32,234 +58,272 @@ impl MasternodeClient {
             .build()
             .expect("Failed to create HTTP client");
 
-        log::info!("📡 Masternode client initialized");
-        log::info!("   TCP: {}", tcp_endpoint);
-        log::info!("   HTTP: {}", http_endpoint);
+        log::info!(
+            "📡 Masternode JSON-RPC client initialized: {}",
+            rpc_endpoint
+        );
 
         Self {
-            tcp_endpoint,
-            http_endpoint,
+            rpc_endpoint,
             client,
-            prefer_tcp: true,
-        }
-    }
-
-    fn parse_endpoint(endpoint: &str) -> (String, String) {
-        // If it's http/https, derive TCP from it
-        if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
-            let http_endpoint = endpoint.to_string();
-            // Extract host:port for TCP (remove scheme and path)
-            let without_scheme = endpoint
-                .trim_start_matches("http://")
-                .trim_start_matches("https://");
-            // Remove any path components
-            let tcp_endpoint = without_scheme
-                .split('/')
-                .next()
-                .unwrap_or(without_scheme)
-                .to_string();
-            (tcp_endpoint, http_endpoint)
-        } else {
-            // If it's just host:port, create both
-            let tcp_endpoint = endpoint.to_string();
-            let http_endpoint = format!("http://{}", endpoint);
-            (tcp_endpoint, http_endpoint)
         }
     }
 
     pub fn endpoint(&self) -> &str {
-        &self.http_endpoint
+        &self.rpc_endpoint
     }
 
-    /// Try TCP request with automatic HTTP fallback
-    async fn request_with_fallback<T: for<'de> Deserialize<'de>>(
+    /// Send a JSON-RPC 2.0 request and return the result
+    async fn rpc_call(
         &self,
         method: &str,
-        path: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<T, ClientError> {
-        // Try TCP first
-        if self.prefer_tcp {
-            match self.tcp_request(method, path, body.clone()).await {
-                Ok(response) => return Ok(response),
-                Err(e) => {
-                    log::warn!("⚠️ TCP request failed, falling back to HTTP: {}", e);
-                }
-            }
-        }
-
-        // Fallback to HTTP
-        self.http_request(method, path, body).await
-    }
-
-    /// Make TCP request
-    async fn tcp_request<T: for<'de> Deserialize<'de>>(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<T, ClientError> {
-        let mut stream = TcpStream::connect(&self.tcp_endpoint).await?;
-
-        // Build request
-        let request = if let Some(body) = body {
-            format!(
-                "{} {} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\n\r\n{}",
-                method,
-                path,
-                self.tcp_endpoint,
-                body.len(),
-                String::from_utf8_lossy(&body)
-            )
-        } else {
-            format!(
-                "{} {} HTTP/1.1\r\nHost: {}\r\n\r\n",
-                method, path, self.tcp_endpoint
-            )
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ClientError> {
+        let id = REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0",
+            id: id.to_string(),
+            method: method.to_string(),
+            params,
         };
 
-        // Send request
-        stream.write_all(request.as_bytes()).await?;
+        log::debug!("→ RPC {}: {:?}", method, request.params);
 
-        // Read response
-        let mut buffer = Vec::new();
-        stream.read_to_end(&mut buffer).await?;
-
-        // Parse HTTP response
-        let response_str = String::from_utf8_lossy(&buffer);
-        let body_start = response_str
-            .find("\r\n\r\n")
-            .ok_or_else(|| ClientError::InvalidResponse("No response body found".to_string()))?
-            + 4;
-
-        let body = &response_str[body_start..];
-        serde_json::from_str(body)
-            .map_err(|e| ClientError::InvalidResponse(format!("JSON parse error: {}", e)))
-    }
-
-    /// Make HTTP request
-    async fn http_request<T: for<'de> Deserialize<'de>>(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<T, ClientError> {
-        let url = format!("{}{}", self.http_endpoint, path);
-
-        let request = match method {
-            "GET" => self.client.get(&url),
-            "POST" => {
-                let mut req = self.client.post(&url);
-                if let Some(body) = body {
-                    req = req.body(body);
-                }
-                req
-            }
-            _ => {
-                return Err(ClientError::InvalidResponse(
-                    "Unsupported method".to_string(),
-                ))
-            }
-        };
-
-        let response = request.send().await?;
+        let response = self
+            .client
+            .post(&self.rpc_endpoint)
+            .json(&request)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             return Err(ClientError::http(response.status().as_u16()));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| ClientError::InvalidResponse(format!("JSON parse error: {}", e)))
+        let rpc_response: JsonRpcResponse = response.json().await.map_err(|e| {
+            ClientError::InvalidResponse(format!("Failed to parse JSON-RPC response: {}", e))
+        })?;
+
+        if let Some(error) = rpc_response.error {
+            return Err(ClientError::RpcError(error.code, error.message));
+        }
+
+        rpc_response
+            .result
+            .ok_or_else(|| ClientError::InvalidResponse("No result in JSON-RPC response".into()))
     }
 
-    /// Get balance for an xpub
-    pub async fn get_balance(&self, xpub: &str) -> Result<Balance, ClientError> {
-        let path = format!("/wallet/balance?xpub={}", xpub);
-        log::debug!("→ GET {}", path);
+    /// Get balance for an address
+    pub async fn get_balance(&self, address: &str) -> Result<Balance, ClientError> {
+        let result = self
+            .rpc_call("getbalance", serde_json::json!([address]))
+            .await?;
 
-        let balance: Balance = self.request_with_fallback("GET", &path, None).await?;
-        log::info!("✅ Balance retrieved: {:?}", balance);
+        // Masternode returns {balance, locked, available} in TIME (f64)
+        let balance_time = result
+            .get("balance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let available_time = result
+            .get("available")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        // Convert TIME to satoshis (1 TIME = 100_000_000 satoshis)
+        let confirmed = (available_time * 100_000_000.0) as u64;
+        let pending = 0u64; // Masternode doesn't report pending separately
+        let total = (balance_time * 100_000_000.0) as u64;
+        let _locked = (locked_time * 100_000_000.0) as u64;
+
+        let balance = Balance {
+            confirmed,
+            pending,
+            total,
+        };
+        log::info!(
+            "✅ Balance: {} TIME (available: {} TIME)",
+            balance_time,
+            available_time
+        );
         Ok(balance)
     }
 
-    /// Get transaction history for an xpub
+    /// Get transaction history
     pub async fn get_transactions(
         &self,
-        xpub: &str,
+        _address: &str,
         limit: u32,
     ) -> Result<Vec<TransactionRecord>, ClientError> {
-        let path = format!("/wallet/transactions?xpub={}&limit={}", xpub, limit);
-        log::debug!("→ GET {} (limit: {})", path, limit);
+        let result = self
+            .rpc_call("listtransactions", serde_json::json!([limit]))
+            .await?;
 
-        let transactions: Vec<TransactionRecord> =
-            self.request_with_fallback("GET", &path, None).await?;
-        log::info!("✅ Retrieved {} transactions", transactions.len());
-        Ok(transactions)
+        let txs: Vec<serde_json::Value> = serde_json::from_value(result).unwrap_or_default();
+
+        let records: Vec<TransactionRecord> = txs
+            .into_iter()
+            .filter_map(|tx| {
+                let txid = tx.get("txid")?.as_str()?.to_string();
+                let category = tx.get("category")?.as_str().unwrap_or("unknown");
+                let amount_time = tx.get("amount")?.as_f64().unwrap_or(0.0);
+                let amount = (amount_time.abs() * 100_000_000.0) as u64;
+                let fee_time = tx.get("fee").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let fee = (fee_time.abs() * 100_000_000.0) as u64;
+                let confirmations = tx
+                    .get("confirmations")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let timestamp = tx.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
+
+                let status = if confirmations >= 6 {
+                    TransactionStatus::Confirmed
+                } else {
+                    TransactionStatus::Pending
+                };
+
+                let (from, to) = match category {
+                    "send" => (vec!["self".to_string()], vec![txid.clone()]),
+                    "receive" => (vec![txid.clone()], vec!["self".to_string()]),
+                    _ => (vec![], vec![]),
+                };
+
+                Some(TransactionRecord {
+                    txid,
+                    from,
+                    to,
+                    amount,
+                    fee,
+                    timestamp,
+                    confirmations,
+                    status,
+                })
+            })
+            .collect();
+
+        log::info!("✅ Retrieved {} transactions", records.len());
+        Ok(records)
     }
 
-    /// Get UTXOs for an xpub
-    pub async fn get_utxos(&self, xpub: &str) -> Result<Vec<Utxo>, ClientError> {
-        let path = format!("/wallet/utxos?xpub={}", xpub);
-        log::debug!("→ GET {}", path);
+    /// Get UTXOs for an address
+    pub async fn get_utxos(&self, address: &str) -> Result<Vec<Utxo>, ClientError> {
+        // listunspent params: [min_conf, max_conf, [addresses], limit]
+        let result = self
+            .rpc_call(
+                "listunspent",
+                serde_json::json!([0, 9999999, [address], 100]),
+            )
+            .await?;
 
-        let utxos: Vec<Utxo> = self.request_with_fallback("GET", &path, None).await?;
+        let utxo_values: Vec<serde_json::Value> =
+            serde_json::from_value(result).unwrap_or_default();
+
+        let utxos: Vec<Utxo> = utxo_values
+            .into_iter()
+            .filter_map(|u| {
+                let txid = u.get("txid")?.as_str()?.to_string();
+                let vout = u.get("vout")?.as_u64()? as u32;
+                let amount_time = u.get("amount")?.as_f64().unwrap_or(0.0);
+                let amount = (amount_time * 100_000_000.0) as u64;
+                let addr = u
+                    .get("address")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let confirmations =
+                    u.get("confirmations").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+                Some(Utxo {
+                    txid,
+                    vout,
+                    amount,
+                    address: addr,
+                    confirmations,
+                })
+            })
+            .collect();
+
         log::info!("✅ Retrieved {} UTXOs", utxos.len());
         Ok(utxos)
     }
 
-    /// Broadcast a signed transaction
+    /// Broadcast a signed transaction (hex-encoded bincode)
     pub async fn broadcast_transaction(&self, tx_hex: &str) -> Result<String, ClientError> {
-        let path = "/transaction/broadcast";
-        log::debug!("→ POST {}", path);
-
-        let body = serde_json::json!({ "tx": tx_hex });
-        let body_bytes = serde_json::to_vec(&body)?;
-
-        let result: BroadcastResponse = self
-            .request_with_fallback("POST", path, Some(body_bytes))
+        let result = self
+            .rpc_call("sendrawtransaction", serde_json::json!([tx_hex]))
             .await?;
-        log::info!("✅ Transaction broadcast: {}", result.txid);
-        Ok(result.txid)
+
+        let txid = result
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| result.to_string().trim_matches('"').to_string());
+
+        log::info!("✅ Transaction broadcast: {}", txid);
+        Ok(txid)
     }
 
-    /// Get address information
-    pub async fn get_address_info(&self, address: &str) -> Result<AddressInfo, ClientError> {
-        let path = format!("/address/{}", address);
-        log::debug!("→ GET {}", path);
+    /// Validate an address
+    pub async fn validate_address(&self, address: &str) -> Result<bool, ClientError> {
+        let result = self
+            .rpc_call("validateaddress", serde_json::json!([address]))
+            .await?;
 
-        let info: AddressInfo = self.request_with_fallback("GET", &path, None).await?;
-        log::debug!("✅ Address info retrieved: {:?}", info);
-        Ok(info)
+        let valid = result
+            .get("isvalid")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(valid)
     }
 
-    /// Check if masternode is reachable
+    /// Check if masternode is reachable via getblockchaininfo
     pub async fn health_check(&self) -> Result<HealthStatus, ClientError> {
-        let path = "/health";
-        log::debug!("→ GET {}", path);
+        let result = self
+            .rpc_call("getblockchaininfo", serde_json::json!([]))
+            .await?;
 
-        let status: HealthStatus = self.request_with_fallback("GET", path, None).await?;
-        log::info!("✅ Masternode healthy: {:?}", status);
+        let height = result.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let status = HealthStatus {
+            status: "healthy".to_string(),
+            version: result
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            block_height: height,
+            peer_count: 0, // Not available from getblockchaininfo
+        };
+
+        log::info!("✅ Masternode healthy: height={}", height);
         Ok(status)
     }
 
     /// Get current blockchain height
     pub async fn get_block_height(&self) -> Result<u64, ClientError> {
-        let path = "/blockchain/height";
-        log::debug!("→ GET {}", path);
+        let result = self
+            .rpc_call("getblockcount", serde_json::json!([]))
+            .await?;
 
-        let result: BlockHeightResponse = self.request_with_fallback("GET", path, None).await?;
-        Ok(result.height)
+        let height = result.as_u64().unwrap_or(0);
+        Ok(height)
     }
 
-    /// Validate an address
-    pub async fn validate_address(&self, address: &str) -> Result<bool, ClientError> {
-        let path = format!("/address/validate/{}", address);
-        log::debug!("→ GET {}", path);
+    /// Get peer info from masternode
+    pub async fn get_peer_info(&self) -> Result<Vec<PeerInfoResult>, ClientError> {
+        let result = self.rpc_call("getpeerinfo", serde_json::json!([])).await?;
 
-        let result: AddressValidation = self.request_with_fallback("GET", &path, None).await?;
-        Ok(result.valid)
+        let peers: Vec<serde_json::Value> = serde_json::from_value(result).unwrap_or_default();
+
+        let peer_info: Vec<PeerInfoResult> = peers
+            .into_iter()
+            .filter_map(|p| {
+                let addr = p.get("addr")?.as_str()?.to_string();
+                let active = p.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+                Some(PeerInfoResult { addr, active })
+            })
+            .collect();
+
+        Ok(peer_info)
     }
 }
 
@@ -304,14 +368,6 @@ pub struct Utxo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddressInfo {
-    pub address: String,
-    pub has_transactions: bool,
-    pub balance: u64,
-    pub transaction_count: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
     pub status: String,
     pub version: String,
@@ -319,19 +375,10 @@ pub struct HealthStatus {
     pub peer_count: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct BroadcastResponse {
-    txid: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct BlockHeightResponse {
-    height: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AddressValidation {
-    valid: bool,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerInfoResult {
+    pub addr: String,
+    pub active: bool,
 }
 
 // ============================================================================
@@ -342,6 +389,9 @@ struct AddressValidation {
 pub enum ClientError {
     #[error("HTTP error {0}: {1}")]
     Http(u16, String),
+
+    #[error("RPC error {0}: {1}")]
+    RpcError(i64, String),
 
     #[error("Request failed: {0}")]
     Request(#[from] reqwest::Error),
@@ -365,7 +415,6 @@ pub enum ClientError {
     Json(#[from] serde_json::Error),
 }
 
-// Fix the HTTP error construction
 impl ClientError {
     pub fn http(status: u16) -> Self {
         let message = match status {
@@ -379,22 +428,20 @@ impl ClientError {
     }
 }
 
-// Update the usage in the impl block
-impl MasternodeClient {
-    // Helper method to handle HTTP errors consistently
-    fn handle_error_response(status: u16) -> ClientError {
-        ClientError::http(status)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_client_creation() {
-        let client = MasternodeClient::new("https://testnet.time-coin.io".to_string());
-        assert_eq!(client.endpoint(), "https://testnet.time-coin.io");
+        let client = MasternodeClient::new("http://127.0.0.1:24101".to_string());
+        assert_eq!(client.endpoint(), "http://127.0.0.1:24101");
+    }
+
+    #[tokio::test]
+    async fn test_client_creation_bare_endpoint() {
+        let client = MasternodeClient::new("127.0.0.1:24101".to_string());
+        assert_eq!(client.endpoint(), "http://127.0.0.1:24101");
     }
 
     #[test]

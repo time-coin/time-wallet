@@ -475,146 +475,33 @@ impl PeerManager {
         Ok(())
     }
 
-    /// Request peer list from a connected peer
-    pub async fn request_peer_list(
+    /// Request peer list from a masternode via JSON-RPC
+    pub async fn request_peer_list_rpc(
         &self,
-        stream: &mut tokio::net::TcpStream,
+        rpc_endpoint: &str,
     ) -> Result<Vec<(String, u16)>, String> {
-        use time_network::protocol::{HandshakeMessage, NetworkMessage};
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let client = crate::masternode_client::MasternodeClient::new(rpc_endpoint.to_string());
 
-        // Perform handshake first (required by masternode protocol)
-        let network_type = match self.network {
-            wallet::NetworkType::Mainnet => time_network::discovery::NetworkType::Mainnet,
-            wallet::NetworkType::Testnet => time_network::discovery::NetworkType::Testnet,
-        };
-
-        // Create a dummy listen address since we're a client
-        let our_addr = "0.0.0.0:0".parse().unwrap();
-        let handshake = HandshakeMessage::new(network_type, our_addr);
-
-        // Send our handshake with magic bytes
-        let magic = network_type.magic_bytes();
-        let handshake_json = serde_json::to_vec(&handshake).map_err(|e| e.to_string())?;
-        let handshake_len = handshake_json.len() as u32;
-
-        stream
-            .write_all(&magic)
+        let peers = client
+            .get_peer_info()
             .await
-            .map_err(|e| format!("Failed to send magic bytes: {}", e))?;
-        stream
-            .write_all(&handshake_len.to_be_bytes())
-            .await
-            .map_err(|e| format!("Failed to send handshake length: {}", e))?;
-        stream
-            .write_all(&handshake_json)
-            .await
-            .map_err(|e| format!("Failed to send handshake: {}", e))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush handshake: {}", e))?;
+            .map_err(|e| format!("RPC getpeerinfo failed: {}", e))?;
 
-        // Receive their handshake (with magic bytes)
-        let mut their_magic = [0u8; 4];
-        stream
-            .read_exact(&mut their_magic)
-            .await
-            .map_err(|e| format!("Failed to read handshake magic bytes: {}", e))?;
-
-        if their_magic != magic {
-            return Err(format!(
-                "Invalid magic bytes in handshake response: expected {:?}, got {:?}",
-                magic, their_magic
-            ));
-        }
-
-        let mut their_len_bytes = [0u8; 4];
-        stream
-            .read_exact(&mut their_len_bytes)
-            .await
-            .map_err(|e| format!("Failed to read handshake response length: {}", e))?;
-        let their_len = u32::from_be_bytes(their_len_bytes) as usize;
-
-        if their_len > 10 * 1024 {
-            return Err(format!("Handshake response too large: {} bytes", their_len));
-        }
-
-        let mut their_handshake_bytes = vec![0u8; their_len];
-        stream
-            .read_exact(&mut their_handshake_bytes)
-            .await
-            .map_err(|e| format!("Failed to read handshake response: {}", e))?;
-
-        let _their_handshake: HandshakeMessage = serde_json::from_slice(&their_handshake_bytes)
-            .map_err(|e| format!("Failed to parse handshake response: {}", e))?;
-
-        // Now send GetPeerList request
-        let request = NetworkMessage::GetPeerList;
-        let request_bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
-        let len = request_bytes.len() as u32;
-
-        log::debug!("Request JSON: {}", String::from_utf8_lossy(&request_bytes));
-
-        stream
-            .write_all(&len.to_be_bytes())
-            .await
-            .map_err(|e| format!("Failed to write length: {}", e))?;
-        stream
-            .write_all(&request_bytes)
-            .await
-            .map_err(|e| format!("Failed to write request: {}", e))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush: {}", e))?;
-
-        // Read response with timeout
-
-        let mut len_bytes = [0u8; 4];
-
-        // Add timeout for reading response
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            stream.read_exact(&mut len_bytes)
-        ).await {
-            Ok(Ok(_)) => {
-                let response_len = u32::from_be_bytes(len_bytes) as usize;
-
-                if response_len > 10 * 1024 * 1024 {
-                    return Err(format!("Response too large: {} bytes", response_len));
+        let result: Vec<(String, u16)> = peers
+            .into_iter()
+            .filter_map(|p| {
+                let parts: Vec<&str> = p.addr.split(':').collect();
+                if parts.len() == 2 {
+                    let ip = parts[0].to_string();
+                    let port = parts[1].parse::<u16>().ok()?;
+                    Some((ip, port))
+                } else {
+                    Some((p.addr, 24100))
                 }
+            })
+            .collect();
 
-                let mut response_bytes = vec![0u8; response_len];
-                stream
-                    .read_exact(&mut response_bytes)
-                    .await
-                    .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-                log::debug!("Response JSON: {}", String::from_utf8_lossy(&response_bytes));
-
-                let response: NetworkMessage = serde_json::from_slice(&response_bytes)
-                    .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-                match response {
-                    NetworkMessage::PeerList(peer_addresses) => {
-                        let peers: Vec<_> = peer_addresses
-                            .into_iter()
-                            .map(|pa| (pa.ip, pa.port))
-                            .collect();
-
-                        Ok(peers)
-                    }
-                    _ => Err("Unexpected response to GetPeerList".into()),
-                }
-            }
-            Ok(Err(e)) => {
-                Err(format!("Failed to read response length: {}", e))
-            }
-            Err(_) => {
-                Err("Timeout waiting for response from masternode - masternode may not be responding to GetPeerList".to_string())
-            }
-        }
+        Ok(result)
     }
 
     /// Try to get peer list from multiple peers until one succeeds
@@ -626,31 +513,21 @@ impl PeerManager {
             return None;
         }
 
-        // Try up to 3 peers
+        // Try up to 3 peers via JSON-RPC
         for peer in healthy_peers.iter().take(3) {
-            let endpoint = format!("{}:{}", peer.address, peer.port);
-            log::debug!("Requesting peers from {}", endpoint);
+            // Use RPC port (P2P port + 1)
+            let rpc_port = peer.port + 1;
+            let rpc_endpoint = format!("http://{}:{}", peer.address, rpc_port);
+            log::debug!("Requesting peers from {} via JSON-RPC", rpc_endpoint);
 
-            match tokio::net::TcpStream::connect(&endpoint).await {
-                Ok(mut stream) => {
-                    log::debug!("Connected to {}", endpoint);
-
-                    match self.request_peer_list(&mut stream).await {
-                        Ok(new_peers) => {
-                            log::debug!("Received {} peers from {}", new_peers.len(), endpoint);
-                            self.record_success(&peer.address, peer.port).await;
-                            return Some(new_peers);
-                        }
-                        Err(e) => {
-                            log::error!("❌ Failed to get peer list from {}: {}", endpoint, e);
-                            log::error!("   This means the masternode at {} is NOT running the latest code with GetPeerList handler", endpoint);
-                            log::error!("   The masternode needs to be rebuilt and restarted!");
-                            self.record_failure(&peer.address, peer.port).await;
-                        }
-                    }
+            match self.request_peer_list_rpc(&rpc_endpoint).await {
+                Ok(new_peers) => {
+                    log::debug!("Received {} peers from {}", new_peers.len(), rpc_endpoint);
+                    self.record_success(&peer.address, peer.port).await;
+                    return Some(new_peers);
                 }
                 Err(e) => {
-                    log::warn!("⚠️ Failed to connect to peer {}: {}", endpoint, e);
+                    log::error!("❌ Failed to get peer list from {}: {}", rpc_endpoint, e);
                     self.record_failure(&peer.address, peer.port).await;
                 }
             }
