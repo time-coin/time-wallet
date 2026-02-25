@@ -28,7 +28,7 @@ pub mod utxo_sync; // UTXO instant synchronization
 pub mod voting;
 
 pub use config::NetworkConfig;
-pub use connection::{PeerConnection, PeerListener};
+pub use connection::PeerConnection;
 pub use discovery::{DnsDiscovery, HttpDiscovery, NetworkType, PeerDiscovery, SeedNodes};
 pub use error::{NetworkError, NetworkResult};
 pub use lock_ordering::LockOrdering; // Export for external use

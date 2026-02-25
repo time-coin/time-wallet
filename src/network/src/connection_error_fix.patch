@@ -1,5 +1,0 @@
---- a/network/src/connection.rs
-+++ b/network/src/connection.rs
-@@ -1,3 +1,4 @@
-+// Enhanced error handling for broken pipe and connection issues
- //! Peer connection with handshake

@@ -20,7 +20,6 @@ pub mod encryption;
 pub mod keypair;
 pub mod metadata_db;
 pub mod mnemonic;
-pub mod p2p_client;
 pub mod pin;
 pub mod transaction;
 pub mod wallet;
@@ -38,7 +37,6 @@ pub use mnemonic::{
     generate_mnemonic, mnemonic_to_keypair, mnemonic_to_keypair_bip44, mnemonic_to_xpub,
     validate_mnemonic, xpub_to_address, MnemonicError, MnemonicPhrase,
 };
-pub use p2p_client::WalletP2PClient;
 pub use pin::{PinAuth, PinConfig, PinError, SecurePin, StoredPin};
 pub use transaction::{Transaction, TransactionError, TxInput, TxOutput};
 pub use wallet::{Wallet, WalletError, UTXO};
