@@ -1,8 +1,0 @@
-'wallet/src/address.rs.bak' -> 'wallet/src/address.rs'
-
-2) Removing inherent to_string (if present) and fixing digest borrows...
-Removed inherent to_string function from wallet/src/address.rs
-Applied digest(&x) -> digest(x) replacements in wallet/src/address.rs
-Display impl occurrences: 0
-
-3) Run cargo fmt --all (if available)...

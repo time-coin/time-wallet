@@ -1,7 +1,0 @@
-Backing up wallet/src/address.rs to wallet/src/address.rs.bak
-'wallet/src/address.rs' -> 'wallet/src/address.rs.bak'
-Inserted format_address helper into wallet/src/address.rs
-Patched wallet/src/address.rs: replaced self.to_string() usages where present
-Running cargo fmt --all (if available)...
-cargo clippy exit code: 101
-Clippy failed. Inspect core/logs/wallet_clippy_after_display_fix.log and paste failing lines here and I will iterate.
