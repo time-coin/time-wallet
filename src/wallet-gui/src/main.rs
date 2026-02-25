@@ -33,6 +33,7 @@ mod wallet_dat;
 mod wallet_db;
 mod wallet_manager;
 mod wallet_sync;
+mod ws_client;
 
 use config::Config;
 use mnemonic_ui::{MnemonicAction, MnemonicInterface};
@@ -198,6 +199,11 @@ struct WalletApp {
 
     // UTXO management
     utxo_manager: UtxoManager,
+
+    // WebSocket client for real-time transaction notifications
+    ws_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<ws_client::WsEvent>>,
+    ws_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    ws_connected: bool,
 }
 
 /// XPub registration status across masternodes
@@ -381,6 +387,9 @@ impl Default for WalletApp {
             registered_masternodes: std::collections::HashSet::new(),
             xpub_registration_status: XPubRegistrationStatus::default(),
             utxo_manager: UtxoManager::new(),
+            ws_event_rx: None,
+            ws_shutdown_tx: None,
+            ws_connected: false,
         };
 
         // If wallet exists and is NOT encrypted, auto-load it
@@ -482,6 +491,9 @@ impl WalletApp {
 
                     // Optional: Auto-refresh balance on startup
                     self.trigger_manual_refresh();
+
+                    // Start WebSocket client for real-time notifications
+                    self.start_ws_client();
 
                     /* DEPRECATED: Old complex network initialization (Phase 3 - delete)
                     // Initialize peer manager
@@ -1237,8 +1249,10 @@ impl WalletApp {
                                     if self.network_manager.is_none() {
                                         log::info!("Initializing network after wallet unlock...");
                                         self.initialize_network();
-                                        // Note: XPub registration will happen automatically after peers connect
                                     }
+
+                                    // Start WebSocket for real-time notifications
+                                    self.start_ws_client();
                                 }
                                 Err(e) => {
                                     log::error!("Failed to unlock wallet: {}", e);
@@ -4199,6 +4213,105 @@ impl WalletApp {
         log::info!("📡 Using JSON-RPC polling for wallet updates (TCP listener deprecated)");
     }
 
+    /// Start WebSocket client for real-time transaction notifications
+    fn start_ws_client(&mut self) {
+        // Don't start if already running
+        if self.ws_event_rx.is_some() {
+            return;
+        }
+
+        // Get the wallet address
+        let address = if let Some(manager) = &self.wallet_manager {
+            match manager.get_primary_address() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    log::warn!("Cannot start WebSocket: no primary address: {}", e);
+                    return;
+                }
+            }
+        } else {
+            return;
+        };
+
+        // Derive WebSocket URL from masternode client endpoint
+        let ws_url = if let Some(client) = &self.masternode_client {
+            let endpoint = client.endpoint();
+            // Convert http://host:port to ws://host:ws_port
+            let url = endpoint.replace("https://", "").replace("http://", "");
+            if let Some(colon_pos) = url.rfind(':') {
+                let host = &url[..colon_pos];
+                if let Ok(rpc_port) = url[colon_pos + 1..].parse::<u16>() {
+                    // WebSocket port = RPC port + 1 (24101 → 24102, 24001 → 24002)
+                    let ws_port = rpc_port + 1;
+                    format!("ws://{}:{}", host, ws_port)
+                } else {
+                    format!("ws://{}:24102", host) // Default testnet
+                }
+            } else {
+                format!("ws://{}:24102", url)
+            }
+        } else {
+            log::warn!("Cannot start WebSocket: no masternode client");
+            return;
+        };
+
+        log::info!(
+            "📡 Starting WebSocket client to {} for address {}",
+            ws_url,
+            address
+        );
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        ws_client::WsClient::start(ws_url, address, event_tx, shutdown_rx);
+
+        self.ws_event_rx = Some(event_rx);
+        self.ws_shutdown_tx = Some(shutdown_tx);
+    }
+
+    /// Check for WebSocket events and update UI
+    fn check_ws_events(&mut self) {
+        let mut events = Vec::new();
+        if let Some(rx) = &mut self.ws_event_rx {
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+        }
+
+        for event in events {
+            match event {
+                ws_client::WsEvent::TransactionReceived(notif) => {
+                    let amount_str = format!("{:.8}", notif.amount);
+                    log::info!(
+                        "💰 Real-time notification: {} TIME received (txid: {}...)",
+                        amount_str,
+                        &notif.txid[..std::cmp::min(16, notif.txid.len())]
+                    );
+
+                    // Add toast notification
+                    self.recent_notifications.push(NotificationToast {
+                        message: format!("💰 Received {} TIME", amount_str),
+                        notification_type: NotificationType::NewTransaction,
+                        created_at: std::time::Instant::now(),
+                        duration_secs: 10,
+                    });
+
+                    // Trigger balance refresh to get updated balance
+                    self.trigger_manual_refresh();
+                }
+                ws_client::WsEvent::Connected(url) => {
+                    self.ws_connected = true;
+                    log::info!("✅ WebSocket connected to {}", url);
+                }
+                ws_client::WsEvent::Disconnected(url) => {
+                    self.ws_connected = false;
+                    log::warn!("⚠️ WebSocket disconnected from {} (will reconnect)", url);
+                }
+            }
+        }
+    }
+
     /// Scan blockchain for wallet transactions on startup
     fn scan_blockchain_for_wallet(&mut self, _xpub: String) {
         // Blockchain scanning via TCP protocol removed - using JSON-RPC polling instead
@@ -4806,6 +4919,9 @@ impl eframe::App for WalletApp {
 
         // Check for UTXO updates from TCP listener
         self.check_utxo_updates();
+
+        // Check for WebSocket real-time notifications
+        self.check_ws_events();
 
         // Initialize protocol client if we have a wallet and network but no client yet
         if self.wallet_manager.is_some()

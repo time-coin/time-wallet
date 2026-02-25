@@ -33,6 +33,8 @@ zeroize = { version = "1.8", features = ["derive"] }
 reqwest = { workspace = true }
 socket2 = "0.5"
 local-ip-address = { workspace = true }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 
 # Logging
 log = "0.4"
