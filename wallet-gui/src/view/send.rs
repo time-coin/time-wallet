@@ -12,15 +12,37 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
     ui.separator();
     ui.add_space(10.0);
 
+    let expected_prefix = if state.is_testnet { "TIME0" } else { "TIME1" };
+    let wrong_prefix = if state.is_testnet { "TIME1" } else { "TIME0" };
+    let network_name = if state.is_testnet { "testnet" } else { "mainnet" };
+
     ui.group(|ui| {
         ui.set_min_width(ui.available_width());
 
         ui.label("Recipient Address");
         ui.add(
             egui::TextEdit::singleline(&mut state.send_address)
-                .hint_text("TIME0... or TIME1...")
+                .hint_text(format!("{}...", expected_prefix))
                 .desired_width(ui.available_width()),
         );
+
+        // Address validation feedback
+        if !state.send_address.is_empty() {
+            if state.send_address.starts_with(wrong_prefix) {
+                ui.colored_label(
+                    egui::Color32::RED,
+                    format!("⚠ This is a {} address. You are on {}.", 
+                        if state.is_testnet { "mainnet" } else { "testnet" },
+                        network_name,
+                    ),
+                );
+            } else if !state.send_address.starts_with(expected_prefix) {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!("⚠ Expected address starting with {}", expected_prefix),
+                );
+            }
+        }
 
         ui.add_space(10.0);
 
@@ -57,7 +79,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         ui.add_space(15.0);
 
-        let can_send = !state.send_address.is_empty()
+        let address_valid = state.send_address.starts_with(expected_prefix);
+        let can_send = address_valid
+            && !state.send_address.is_empty()
             && !state.send_amount.is_empty()
             && !state.loading;
 
@@ -71,7 +95,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             )
             .clicked()
         {
-            // Parse amount and fee (in micro-TIME units)
             let amount = parse_time_amount(&state.send_amount);
             let fee = if state.send_fee.is_empty() {
                 1_000 // default fee: 0.001 TIME

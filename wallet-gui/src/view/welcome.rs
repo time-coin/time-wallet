@@ -41,10 +41,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
             let response = ui.add(
                 egui::TextEdit::singleline(&mut state.password_input)
-                    .password(true)
+                    .password(!state.show_password)
                     .hint_text("Password")
                     .desired_width(250.0),
             );
+
+            ui.checkbox(&mut state.show_password, "Show password");
 
             ui.add_space(10.0);
 
