@@ -362,56 +362,83 @@ async fn discover_peers(
 
     if endpoints.is_empty() {
         let _ = svc_tx.send(ServiceEvent::Error(
-            "No peers available. Add peers to config.toml or check your internet connection.".to_string(),
+            "No peers available. Add peers to config.toml or check your internet connection."
+                .to_string(),
         ));
         return Err(());
     }
 
-    let mut peer_infos = Vec::new();
-    for endpoint in &endpoints {
-        let client = MasternodeClient::new(endpoint.clone());
-        let start = Instant::now();
-        let (is_healthy, ping_ms, block_height, version) = match client.health_check().await {
-            Ok(health) => {
-                let ms = start.elapsed().as_millis() as u64;
-                (true, Some(ms), Some(health.block_height), Some(health.version))
+    // Probe all peers in parallel with a short timeout
+    let probe_timeout = std::time::Duration::from_secs(8);
+    let mut handles = Vec::new();
+    for endpoint in endpoints.clone() {
+        handles.push(tokio::spawn(async move {
+            let client = MasternodeClient::new(endpoint.clone());
+            let start = Instant::now();
+            let (is_healthy, ping_ms, block_height, version) =
+                match tokio::time::timeout(probe_timeout, client.health_check()).await {
+                    Ok(Ok(health)) => {
+                        let ms = start.elapsed().as_millis() as u64;
+                        (
+                            true,
+                            Some(ms),
+                            Some(health.block_height),
+                            Some(health.version),
+                        )
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("⚠ Peer {} unhealthy: {}", endpoint, e);
+                        (false, None, None, None)
+                    }
+                    Err(_) => {
+                        log::warn!("⚠ Peer {} timed out", endpoint);
+                        (false, None, None, None)
+                    }
+                };
+
+            // Probe WebSocket connectivity (WS port = RPC port + 1)
+            let ws_available = if is_healthy {
+                let ws_url = crate::config_new::Config::derive_ws_url(&endpoint);
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    tokio_tungstenite::connect_async(&ws_url),
+                )
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false)
+            } else {
+                false
+            };
+
+            PeerInfo {
+                endpoint,
+                is_active: false,
+                is_healthy,
+                ws_available,
+                ping_ms,
+                block_height,
+                version,
             }
-            Err(_) => (false, None, None, None),
-        };
+        }));
+    }
 
-        // Probe WebSocket connectivity
-        let ws_available = if is_healthy {
-            let ws_url = endpoint
-                .replacen("https://", "wss://", 1)
-                .replacen("http://", "ws://", 1)
-                + "/ws";
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                tokio_tungstenite::connect_async(&ws_url),
-            )
-            .await
-            .map(|r| r.is_ok())
-            .unwrap_or(false)
-        } else {
-            false
-        };
-
-        peer_infos.push(PeerInfo {
-            endpoint: endpoint.clone(),
-            is_active: false,
-            is_healthy,
-            ws_available,
-            ping_ms,
-            block_height,
-            version,
-        });
+    let mut peer_infos = Vec::new();
+    for handle in handles {
+        if let Ok(info) = handle.await {
+            peer_infos.push(info);
+        }
     }
 
     // Sort: WS-capable first, then healthy by fastest ping, unhealthy last
     peer_infos.sort_by(|a, b| {
-        b.is_healthy.cmp(&a.is_healthy)
+        b.is_healthy
+            .cmp(&a.is_healthy)
             .then(b.ws_available.cmp(&a.ws_available))
-            .then(a.ping_ms.unwrap_or(u64::MAX).cmp(&b.ping_ms.unwrap_or(u64::MAX)))
+            .then(
+                a.ping_ms
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.ping_ms.unwrap_or(u64::MAX)),
+            )
     });
 
     let active_endpoint = peer_infos
@@ -464,7 +491,9 @@ impl ServiceState {
     /// Create a wallet from mnemonic and start the WebSocket connection.
     fn create_wallet(&mut self, mnemonic: &str, password: Option<String>) {
         let result = match password {
-            Some(pw) => WalletManager::create_from_mnemonic_encrypted(self.network_type, mnemonic, &pw),
+            Some(pw) => {
+                WalletManager::create_from_mnemonic_encrypted(self.network_type, mnemonic, &pw)
+            }
             None => WalletManager::create_from_mnemonic(self.network_type, mnemonic),
         };
         self.finish_wallet_init(result);
@@ -503,7 +532,9 @@ impl ServiceState {
                 }
             }
             Err(e) => {
-                let _ = self.svc_tx.send(ServiceEvent::Error(format!("Wallet error: {}", e)));
+                let _ = self
+                    .svc_tx
+                    .send(ServiceEvent::Error(format!("Wallet error: {}", e)));
             }
         }
     }

@@ -60,7 +60,11 @@ impl Config {
             let contents = fs::read_to_string(&config_path)?;
             let mut config: Config = toml::from_str(&contents)?;
             config.data_dir = Some(Self::data_dir()?);
-            log::info!("✅ Config loaded: network={}, {} manual peers", config.network, config.peers.len());
+            log::info!(
+                "✅ Config loaded: network={}, {} manual peers",
+                config.network,
+                config.peers.len()
+            );
             Ok(config)
         } else {
             log::info!("📝 Creating default config");
@@ -88,9 +92,10 @@ impl Config {
 
     /// Get the wallet directory for current network
     pub fn wallet_dir(&self) -> PathBuf {
-        let mut path = self.data_dir.clone().unwrap_or_else(|| {
-            Self::data_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        let mut path = self
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| Self::data_dir().unwrap_or_else(|_| PathBuf::from(".")));
         path.push("wallets");
         path.push(&self.network);
         path
@@ -143,19 +148,36 @@ impl Config {
             return ws.clone();
         }
         if let Some(ref endpoint) = self.active_endpoint {
-            // Derive: http(s)://host:port → ws(s)://host:port/ws
-            return endpoint
-                .replacen("https://", "wss://", 1)
-                .replacen("http://", "ws://", 1)
-                + "/ws";
+            return Self::derive_ws_url(endpoint);
         }
         // No endpoint yet — return a placeholder that will fail gracefully
         "ws://127.0.0.1:0/ws".to_string()
     }
 
+    /// Derive a WebSocket URL from an RPC endpoint.
+    ///
+    /// The masternode WS server listens on RPC port + 1, so we bump the port
+    /// and swap the scheme: `http://host:24101` → `ws://host:24102`.
+    pub fn derive_ws_url(endpoint: &str) -> String {
+        let base = endpoint
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        // Bump port: WS port = RPC port + 1
+        if let Some(colon) = base.rfind(':') {
+            if let Ok(rpc_port) = base[colon + 1..].parse::<u16>() {
+                return format!("{}{}", &base[..colon + 1], rpc_port + 1);
+            }
+        }
+        base
+    }
+
     /// Get the RPC port for the current network.
     pub fn rpc_port(&self) -> u16 {
-        if self.is_testnet() { 24101 } else { 24001 }
+        if self.is_testnet() {
+            24101
+        } else {
+            24001
+        }
     }
 
     /// Build HTTP endpoint URLs from the manual peer list.
@@ -224,7 +246,7 @@ mod tests {
     #[test]
     fn test_network_switch() {
         let mut config = Config::default();
-        
+
         config.use_mainnet();
         assert_eq!(config.network, "mainnet");
 
@@ -256,14 +278,14 @@ mod tests {
     #[test]
     fn test_ws_url_derived() {
         let mut config = Config::default();
-        config.active_endpoint = Some("https://example.com".to_string());
+        config.active_endpoint = Some("https://example.com:24001".to_string());
         config.ws_endpoint = None;
-        assert_eq!(config.ws_url(), "wss://example.com/ws");
+        assert_eq!(config.ws_url(), "wss://example.com:24002");
 
         let mut config2 = Config::default();
         config2.active_endpoint = Some("http://127.0.0.1:24101".to_string());
         config2.ws_endpoint = None;
-        assert_eq!(config2.ws_url(), "ws://127.0.0.1:24101/ws");
+        assert_eq!(config2.ws_url(), "ws://127.0.0.1:24102");
     }
 
     #[test]

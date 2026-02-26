@@ -14,7 +14,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
     let expected_prefix = if state.is_testnet { "TIME0" } else { "TIME1" };
     let wrong_prefix = if state.is_testnet { "TIME1" } else { "TIME0" };
-    let network_name = if state.is_testnet { "testnet" } else { "mainnet" };
+    let network_name = if state.is_testnet {
+        "testnet"
+    } else {
+        "mainnet"
+    };
 
     ui.group(|ui| {
         ui.set_min_width(ui.available_width());
@@ -31,8 +35,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             if state.send_address.starts_with(wrong_prefix) {
                 ui.colored_label(
                     egui::Color32::RED,
-                    format!("⚠ This is a {} address. You are on {}.", 
-                        if state.is_testnet { "mainnet" } else { "testnet" },
+                    format!(
+                        "⚠ This is a {} address. You are on {}.",
+                        if state.is_testnet {
+                            "mainnet"
+                        } else {
+                            "testnet"
+                        },
                         network_name,
                     ),
                 );
@@ -88,10 +97,8 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         if ui
             .add_enabled(
                 can_send,
-                egui::Button::new(
-                    egui::RichText::new("📤 Send Transaction").size(16.0),
-                )
-                .min_size(egui::vec2(200.0, 36.0)),
+                egui::Button::new(egui::RichText::new("📤 Send Transaction").size(16.0))
+                    .min_size(egui::vec2(200.0, 36.0)),
             )
             .clicked()
         {

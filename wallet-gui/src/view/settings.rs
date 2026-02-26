@@ -15,7 +15,11 @@ pub fn show(ui: &mut Ui, state: &AppState) {
         ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new("Network").strong());
         ui.add_space(4.0);
-        let network = if state.is_testnet { "Testnet" } else { "Mainnet" };
+        let network = if state.is_testnet {
+            "Testnet"
+        } else {
+            "Mainnet"
+        };
         ui.label(format!("Current network: {}", network));
     });
 

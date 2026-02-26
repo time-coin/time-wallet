@@ -55,9 +55,8 @@ fn main() -> Result<(), eframe::Error> {
 /// Load the logo PNG as an eframe window icon.
 fn load_icon() -> egui::IconData {
     let png_data = include_bytes!("../assets/logo.png");
-    let image = image::load_from_memory(png_data).unwrap_or_else(|_| {
-        image::DynamicImage::new_rgba8(32, 32)
-    });
+    let image = image::load_from_memory(png_data)
+        .unwrap_or_else(|_| image::DynamicImage::new_rgba8(32, 32));
     let rgba = image.to_rgba8();
     let (w, h) = rgba.dimensions();
     egui::IconData {

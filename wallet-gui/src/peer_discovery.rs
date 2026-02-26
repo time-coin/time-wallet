@@ -133,7 +133,11 @@ fn load_cache(is_testnet: bool) -> Option<Vec<String>> {
     let cache: PeerCache = serde_json::from_str(&contents).ok()?;
     let expected_network = if is_testnet { "testnet" } else { "mainnet" };
     if cache.network != expected_network {
-        log::warn!("⚠ Cached peers are for {}, need {} — ignoring", cache.network, expected_network);
+        log::warn!(
+            "⚠ Cached peers are for {}, need {} — ignoring",
+            cache.network,
+            expected_network
+        );
         return None;
     }
     if cache.peers.is_empty() {

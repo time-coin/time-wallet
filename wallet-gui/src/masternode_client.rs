@@ -342,17 +342,26 @@ impl MasternodeClient {
             .rpc_call("getblockchaininfo", serde_json::json!([]))
             .await?;
 
-        let height = result.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+        // Masternode returns "blocks", fall back to "height" for compat
+        let height = result
+            .get("blocks")
+            .or_else(|| result.get("height"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        // Masternode returns "chain", fall back to "version" for compat
+        let version = result
+            .get("chain")
+            .or_else(|| result.get("version"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         let status = HealthStatus {
             status: "healthy".to_string(),
-            version: result
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
+            version,
             block_height: height,
-            peer_count: 0, // Not available from getblockchaininfo
+            peer_count: 0,
         };
 
         log::info!("✅ Masternode healthy: height={}", height);

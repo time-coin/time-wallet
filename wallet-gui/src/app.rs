@@ -61,8 +61,8 @@ impl eframe::App for App {
 
             // Logo
             let logo_bytes = include_bytes!("../assets/logo.png");
-            let image = egui::Image::from_bytes("bytes://logo.png", logo_bytes.as_slice())
-                .max_width(48.0);
+            let image =
+                egui::Image::from_bytes("bytes://logo.png", logo_bytes.as_slice()).max_width(48.0);
             ui.add(image);
 
             ui.add_space(5.0);
@@ -71,43 +71,71 @@ impl eframe::App for App {
             ui.add_space(5.0);
 
             if self.state.wallet_loaded {
-                nav_button(ui, &mut self.state, "🏠 Overview", Screen::Overview, &self.ui_tx);
+                nav_button(
+                    ui,
+                    &mut self.state,
+                    "🏠 Overview",
+                    Screen::Overview,
+                    &self.ui_tx,
+                );
                 nav_button(ui, &mut self.state, "📤 Send", Screen::Send, &self.ui_tx);
-                nav_button(ui, &mut self.state, "📥 Receive", Screen::Receive, &self.ui_tx);
-                nav_button(ui, &mut self.state, "📋 Transactions", Screen::Transactions, &self.ui_tx);
+                nav_button(
+                    ui,
+                    &mut self.state,
+                    "📥 Receive",
+                    Screen::Receive,
+                    &self.ui_tx,
+                );
+                nav_button(
+                    ui,
+                    &mut self.state,
+                    "📋 Transactions",
+                    Screen::Transactions,
+                    &self.ui_tx,
+                );
                 ui.separator();
-                nav_button(ui, &mut self.state, "🔗 Connections", Screen::Connections, &self.ui_tx);
-                nav_button(ui, &mut self.state, "⚙ Settings", Screen::Settings, &self.ui_tx);
+                nav_button(
+                    ui,
+                    &mut self.state,
+                    "🔗 Connections",
+                    Screen::Connections,
+                    &self.ui_tx,
+                );
+                nav_button(
+                    ui,
+                    &mut self.state,
+                    "⚙ Settings",
+                    Screen::Settings,
+                    &self.ui_tx,
+                );
             }
         });
 
         // 3. Central panel — route to the active view
-        egui::CentralPanel::default().show(ctx, |ui| {
-            match self.state.screen {
-                Screen::Welcome | Screen::MnemonicSetup | Screen::MnemonicConfirm => {
-                    view::welcome::show(ui, &mut self.state, &self.ui_tx);
-                }
-                Screen::Overview => {
-                    view::overview::show(ui, &self.state, &self.ui_tx);
-                }
-                Screen::Send => {
-                    view::send::show(ui, &mut self.state, &self.ui_tx);
-                }
-                Screen::Receive => {
-                    view::receive::show(ui, &mut self.state, &self.ui_tx);
-                }
-                Screen::Transactions => {
-                    view::transactions::show(ui, &self.state, &self.ui_tx);
-                }
-                Screen::Settings => {
-                    view::settings::show(ui, &self.state);
-                }
-                Screen::Connections => {
-                    view::connections::show(ui, &self.state);
-                }
-                Screen::Utxos => {
-                    view::overview::show(ui, &self.state, &self.ui_tx);
-                }
+        egui::CentralPanel::default().show(ctx, |ui| match self.state.screen {
+            Screen::Welcome | Screen::MnemonicSetup | Screen::MnemonicConfirm => {
+                view::welcome::show(ui, &mut self.state, &self.ui_tx);
+            }
+            Screen::Overview => {
+                view::overview::show(ui, &self.state, &self.ui_tx);
+            }
+            Screen::Send => {
+                view::send::show(ui, &mut self.state, &self.ui_tx);
+            }
+            Screen::Receive => {
+                view::receive::show(ui, &mut self.state, &self.ui_tx);
+            }
+            Screen::Transactions => {
+                view::transactions::show(ui, &self.state, &self.ui_tx);
+            }
+            Screen::Settings => {
+                view::settings::show(ui, &self.state);
+            }
+            Screen::Connections => {
+                view::connections::show(ui, &self.state);
+            }
+            Screen::Utxos => {
+                view::overview::show(ui, &self.state, &self.ui_tx);
             }
         });
     }
@@ -122,11 +150,9 @@ fn nav_button(
     ui_tx: &mpsc::UnboundedSender<UiEvent>,
 ) {
     let is_active = state.screen == screen;
-    let button = egui::Button::new(
-        egui::RichText::new(label).size(14.0),
-    )
-    .selected(is_active)
-    .min_size(egui::vec2(140.0, 28.0));
+    let button = egui::Button::new(egui::RichText::new(label).size(14.0))
+        .selected(is_active)
+        .min_size(egui::vec2(140.0, 28.0));
 
     if ui.add(button).clicked() && !is_active {
         state.screen = screen;

@@ -13,19 +13,19 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         // Logo
         let logo_bytes = include_bytes!("../../assets/logo.png");
-        let image = egui::Image::from_bytes("bytes://logo.png", logo_bytes.as_slice())
-            .max_width(128.0);
+        let image =
+            egui::Image::from_bytes("bytes://logo.png", logo_bytes.as_slice()).max_width(128.0);
         ui.add(image);
 
         ui.add_space(20.0);
-        ui.heading(
-            egui::RichText::new("TIME Coin Wallet")
-                .size(28.0)
-                .strong(),
-        );
+        ui.heading(egui::RichText::new("TIME Coin Wallet").size(28.0).strong());
         ui.add_space(8.0);
 
-        let network_label = if state.is_testnet { "Testnet" } else { "Mainnet" };
+        let network_label = if state.is_testnet {
+            "Testnet"
+        } else {
+            "Mainnet"
+        };
         ui.label(
             egui::RichText::new(format!("Secure thin-client wallet — {}", network_label))
                 .size(14.0)
@@ -50,13 +50,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
             ui.add_space(10.0);
 
-            let submitted = response.lost_focus()
-                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
             let unlock_clicked = ui
-                .add(egui::Button::new(
-                    egui::RichText::new("🔓 Unlock").size(16.0),
-                ).min_size(egui::vec2(200.0, 40.0)))
+                .add(
+                    egui::Button::new(egui::RichText::new("🔓 Unlock").size(16.0))
+                        .min_size(egui::vec2(200.0, 40.0)),
+                )
                 .clicked();
 
             if (unlock_clicked || submitted) && !state.password_input.is_empty() {
@@ -72,9 +72,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         } else {
             // Load existing wallet
             if ui
-                .add(egui::Button::new(
-                    egui::RichText::new("🔓 Open Wallet").size(16.0),
-                ).min_size(egui::vec2(200.0, 40.0)))
+                .add(
+                    egui::Button::new(egui::RichText::new("🔓 Open Wallet").size(16.0))
+                        .min_size(egui::vec2(200.0, 40.0)),
+                )
                 .clicked()
             {
                 let _ = ui_tx.send(UiEvent::LoadWallet { password: None });
@@ -84,9 +85,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
             // Create new wallet
             if ui
-                .add(egui::Button::new(
-                    egui::RichText::new("✨ Create New Wallet").size(16.0),
-                ).min_size(egui::vec2(200.0, 40.0)))
+                .add(
+                    egui::Button::new(egui::RichText::new("✨ Create New Wallet").size(16.0))
+                        .min_size(egui::vec2(200.0, 40.0)),
+                )
                 .clicked()
             {
                 let _ = ui_tx.send(UiEvent::NavigatedTo(crate::events::Screen::MnemonicSetup));

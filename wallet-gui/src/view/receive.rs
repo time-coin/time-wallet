@@ -119,15 +119,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         ui.label(egui::RichText::new(display).monospace());
 
                         // Copy button
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui.button("📋").clicked() {
-                                    ui.ctx()
-                                        .copy_text(state.addresses[i].address.clone());
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("📋").clicked() {
+                                ui.ctx().copy_text(state.addresses[i].address.clone());
+                            }
+                        });
                     });
                 });
             }

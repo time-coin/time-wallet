@@ -83,7 +83,9 @@ pub enum ServiceEvent {
     },
 
     /// New wallet created — pass mnemonic back for confirmation screen.
-    WalletCreated { mnemonic: String },
+    WalletCreated {
+        mnemonic: String,
+    },
 
     /// Updated balance from masternode.
     BalanceUpdated(Balance),
@@ -95,7 +97,9 @@ pub enum ServiceEvent {
     UtxosUpdated(Vec<Utxo>),
 
     /// Transaction broadcast succeeded.
-    TransactionSent { txid: String },
+    TransactionSent {
+        txid: String,
+    },
 
     /// Real-time transaction notification from WebSocket.
     TransactionReceived(TxNotification),

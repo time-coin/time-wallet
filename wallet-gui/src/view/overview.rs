@@ -15,7 +15,11 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
         if ui
             .add_enabled(
                 !state.loading,
-                egui::Button::new(if state.loading { "⏳ Refreshing..." } else { "🔄 Refresh" }),
+                egui::Button::new(if state.loading {
+                    "⏳ Refreshing..."
+                } else {
+                    "🔄 Refresh"
+                }),
             )
             .clicked()
         {
@@ -40,7 +44,11 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
     ui.group(|ui| {
         ui.set_min_width(ui.available_width());
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("Balance").size(14.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new("Balance")
+                    .size(14.0)
+                    .color(egui::Color32::GRAY),
+            );
             ui.add_space(4.0);
 
             let total_time = state.balance.total as f64 / 1_000_000.0;
@@ -93,7 +101,9 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                                 tx.txid.clone()
                             };
 
-                            ui.label(egui::RichText::new(format!("{:.6} TIME", amount_time)).strong());
+                            ui.label(
+                                egui::RichText::new(format!("{:.6} TIME", amount_time)).strong(),
+                            );
                             ui.add_space(10.0);
                             ui.label(
                                 egui::RichText::new(short_txid)
@@ -101,15 +111,18 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                                     .monospace(),
                             );
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let status_label = format!("{} conf", tx.confirmations);
-                                let color = if tx.confirmations > 0 {
-                                    egui::Color32::GREEN
-                                } else {
-                                    egui::Color32::YELLOW
-                                };
-                                ui.label(egui::RichText::new(status_label).color(color));
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let status_label = format!("{} conf", tx.confirmations);
+                                    let color = if tx.confirmations > 0 {
+                                        egui::Color32::GREEN
+                                    } else {
+                                        egui::Color32::YELLOW
+                                    };
+                                    ui.label(egui::RichText::new(status_label).color(color));
+                                },
+                            );
                         });
                     });
                 }
