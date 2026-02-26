@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "src/core",
-    "src/wallet",
-    "src/network",
-    "src/mempool",
-    "src/wallet-gui",
+    "core",
+    "wallet",
+    "network",
+    "mempool",
+    "wallet-gui",
 ]
-default-members = ["src/wallet-gui"]
+default-members = ["wallet-gui"]
 resolver = "2"
 
 [workspace.package]
