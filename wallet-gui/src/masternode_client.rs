@@ -378,6 +378,31 @@ impl MasternodeClient {
         Ok(height)
     }
 
+    /// Query instant finality status for a transaction
+    pub async fn get_transaction_finality(
+        &self,
+        txid: &str,
+    ) -> Result<FinalityStatus, ClientError> {
+        let result = self
+            .rpc_call("gettransactionfinality", serde_json::json!([txid]))
+            .await?;
+
+        let finalized = result
+            .get("finalized")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let confirmations = result
+            .get("confirmations")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        Ok(FinalityStatus {
+            txid: txid.to_string(),
+            finalized,
+            confirmations,
+        })
+    }
+
     /// Get peer info from masternode
     pub async fn get_peer_info(&self) -> Result<Vec<PeerInfoResult>, ClientError> {
         let result = self.rpc_call("getpeerinfo", serde_json::json!([])).await?;
@@ -424,6 +449,7 @@ pub struct TransactionRecord {
 #[serde(rename_all = "lowercase")]
 pub enum TransactionStatus {
     Pending,
+    Finalized,
     Confirmed,
     Failed,
 }
@@ -443,6 +469,13 @@ pub struct HealthStatus {
     pub version: String,
     pub block_height: u64,
     pub peer_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalityStatus {
+    pub txid: String,
+    pub finalized: bool,
+    pub confirmations: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

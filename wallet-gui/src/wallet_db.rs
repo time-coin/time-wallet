@@ -400,6 +400,50 @@ impl WalletDb {
         self.db.flush()?;
         Ok(())
     }
+
+    // ==================== Cached Data (for instant startup) ====================
+
+    /// Save cached transactions (from RPC/WS) for instant startup
+    pub fn save_cached_transactions(
+        &self,
+        txs: &[crate::masternode_client::TransactionRecord],
+    ) -> Result<(), WalletDbError> {
+        let value = bincode::serialize(txs)?;
+        self.db.insert(b"cache:transactions", value)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    /// Load cached transactions for instant startup
+    pub fn get_cached_transactions(
+        &self,
+    ) -> Result<Vec<crate::masternode_client::TransactionRecord>, WalletDbError> {
+        match self.db.get(b"cache:transactions")? {
+            Some(data) => Ok(bincode::deserialize(&data)?),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Save cached balance for instant startup
+    pub fn save_cached_balance(
+        &self,
+        balance: &crate::masternode_client::Balance,
+    ) -> Result<(), WalletDbError> {
+        let value = bincode::serialize(balance)?;
+        self.db.insert(b"cache:balance", value)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    /// Load cached balance for instant startup
+    pub fn get_cached_balance(
+        &self,
+    ) -> Result<Option<crate::masternode_client::Balance>, WalletDbError> {
+        match self.db.get(b"cache:balance")? {
+            Some(data) => Ok(Some(bincode::deserialize(&data)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 /// UTXO record for wallet

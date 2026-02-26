@@ -4,6 +4,7 @@ use egui::Ui;
 use tokio::sync::mpsc;
 
 use crate::events::UiEvent;
+use crate::masternode_client::TransactionStatus;
 use crate::state::AppState;
 
 /// Render the overview screen.
@@ -51,7 +52,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
             );
             ui.add_space(4.0);
 
-            let total_time = state.balance.total as f64 / 1_000_000.0;
+            let total_time = state.balance.total as f64 / 100_000_000.0;
             ui.label(
                 egui::RichText::new(format!("{:.6} TIME", total_time))
                     .size(32.0)
@@ -60,8 +61,8 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let confirmed = state.balance.confirmed as f64 / 1_000_000.0;
-                let pending = state.balance.pending as f64 / 1_000_000.0;
+                let confirmed = state.balance.confirmed as f64 / 100_000_000.0;
+                let pending = state.balance.pending as f64 / 100_000_000.0;
                 ui.label(format!("Confirmed: {:.6}", confirmed));
                 ui.add_space(20.0);
                 if state.balance.pending > 0 {
@@ -75,6 +76,31 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
     });
 
     ui.add_space(15.0);
+
+    // Real-time notifications
+    if !state.recent_notifications.is_empty() {
+        ui.heading("Notifications");
+        ui.add_space(5.0);
+        for notif in state.recent_notifications.iter().rev().take(5) {
+            ui.horizontal(|ui| {
+                ui.colored_label(
+                    egui::Color32::GREEN,
+                    format!("Received {:.6} TIME", notif.amount),
+                );
+                let short_addr = if notif.address.len() > 20 {
+                    format!("{}..", &notif.address[..20])
+                } else {
+                    notif.address.clone()
+                };
+                ui.label(
+                    egui::RichText::new(format!("to {}", short_addr))
+                        .color(egui::Color32::GRAY)
+                        .monospace(),
+                );
+            });
+        }
+        ui.add_space(10.0);
+    }
 
     // Recent transactions
     ui.heading("Recent Transactions");
@@ -94,7 +120,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                     ui.group(|ui| {
                         ui.set_min_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            let amount_time = tx.amount as f64 / 1_000_000.0;
+                            let amount_time = tx.amount as f64 / 100_000_000.0;
                             let short_txid = if tx.txid.len() > 16 {
                                 format!("{}..", &tx.txid[..16])
                             } else {
@@ -114,11 +140,20 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    let status_label = format!("{} conf", tx.confirmations);
-                                    let color = if tx.confirmations > 0 {
-                                        egui::Color32::GREEN
-                                    } else {
-                                        egui::Color32::YELLOW
+                                    let (status_label, color) = match tx.status {
+                                        TransactionStatus::Finalized => {
+                                            ("Finalized".to_string(), egui::Color32::GREEN)
+                                        }
+                                        TransactionStatus::Confirmed => (
+                                            format!("{} conf", tx.confirmations),
+                                            egui::Color32::GREEN,
+                                        ),
+                                        TransactionStatus::Pending => {
+                                            ("Pending".to_string(), egui::Color32::YELLOW)
+                                        }
+                                        TransactionStatus::Failed => {
+                                            ("Failed".to_string(), egui::Color32::RED)
+                                        }
                                     };
                                     ui.label(egui::RichText::new(status_label).color(color));
                                 },

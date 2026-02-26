@@ -5,7 +5,7 @@
 //! fields directly — no locking, no channels.
 
 use crate::events::{Screen, ServiceEvent};
-use crate::masternode_client::{Balance, HealthStatus, TransactionRecord, Utxo};
+use crate::masternode_client::{Balance, HealthStatus, TransactionRecord, TransactionStatus, Utxo};
 use crate::ws_client::TxNotification;
 
 /// Information about a discovered peer.
@@ -139,7 +139,24 @@ impl AppState {
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
+                // Merge: keep WS-injected pending/finalized txs not yet in RPC results
+                let pending_ws: Vec<_> = self
+                    .transactions
+                    .iter()
+                    .filter(|t| {
+                        matches!(
+                            t.status,
+                            TransactionStatus::Pending | TransactionStatus::Finalized
+                        )
+                    })
+                    .filter(|t| !txs.iter().any(|rpc_tx| rpc_tx.txid == t.txid))
+                    .cloned()
+                    .collect();
                 self.transactions = txs;
+                // Prepend pending WS txs that haven't appeared in RPC yet
+                for tx in pending_ws.into_iter().rev() {
+                    self.transactions.insert(0, tx);
+                }
             }
 
             ServiceEvent::UtxosUpdated(utxos) => {
@@ -159,6 +176,26 @@ impl AppState {
                 // Keep only the last 50 notifications
                 if self.recent_notifications.len() > 50 {
                     self.recent_notifications.remove(0);
+                }
+            }
+
+            ServiceEvent::TransactionInserted(tx) => {
+                // Insert at front if not already present
+                if !self.transactions.iter().any(|t| t.txid == tx.txid) {
+                    self.transactions.insert(0, tx);
+                }
+            }
+
+            ServiceEvent::TransactionFinalityUpdated {
+                txid,
+                finalized,
+                confirmations,
+            } => {
+                if let Some(tx) = self.transactions.iter_mut().find(|t| t.txid == txid) {
+                    if finalized {
+                        tx.status = TransactionStatus::Finalized;
+                    }
+                    tx.confirmations = confirmations;
                 }
             }
 

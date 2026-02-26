@@ -4,6 +4,7 @@ use egui::Ui;
 use tokio::sync::mpsc;
 
 use crate::events::UiEvent;
+use crate::masternode_client::TransactionStatus;
 use crate::state::AppState;
 
 /// Render the transactions screen.
@@ -44,24 +45,28 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     // Status icon
-                    let (icon, color) = if tx.confirmations > 0 {
-                        ("OK", egui::Color32::GREEN)
-                    } else {
-                        ("..", egui::Color32::YELLOW)
+                    let (icon, color) = match tx.status {
+                        TransactionStatus::Finalized => ("OK", egui::Color32::GREEN),
+                        TransactionStatus::Confirmed => ("OK", egui::Color32::GREEN),
+                        TransactionStatus::Pending => ("..", egui::Color32::YELLOW),
+                        TransactionStatus::Failed => ("!!", egui::Color32::RED),
                     };
                     ui.label(egui::RichText::new(icon).size(16.0).color(color));
 
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            let amount = tx.amount as f64 / 1_000_000.0;
+                            let amount = tx.amount as f64 / 100_000_000.0;
                             ui.label(egui::RichText::new(format!("{:.6} TIME", amount)).strong());
 
                             ui.add_space(10.0);
 
-                            let conf_text = if tx.confirmations > 0 {
-                                format!("{} confirmations", tx.confirmations)
-                            } else {
-                                "Pending".to_string()
+                            let conf_text = match tx.status {
+                                TransactionStatus::Finalized => "Finalized".to_string(),
+                                TransactionStatus::Confirmed => {
+                                    format!("{} confirmations", tx.confirmations)
+                                }
+                                TransactionStatus::Pending => "Pending".to_string(),
+                                TransactionStatus::Failed => "Failed".to_string(),
                             };
                             ui.label(
                                 egui::RichText::new(conf_text)

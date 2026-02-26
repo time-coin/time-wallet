@@ -107,6 +107,16 @@ pub enum ServiceEvent {
     /// Real-time transaction notification from WebSocket.
     TransactionReceived(TxNotification),
 
+    /// A single transaction should be inserted (from WS notification or finality update).
+    TransactionInserted(TransactionRecord),
+
+    /// Transaction finality status updated.
+    TransactionFinalityUpdated {
+        txid: String,
+        finalized: bool,
+        confirmations: u32,
+    },
+
     /// Masternode health status.
     HealthUpdated(HealthStatus),
 

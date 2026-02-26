@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use crate::config_new::Config;
 use crate::events::{Screen, ServiceEvent, UiEvent};
-use crate::masternode_client::MasternodeClient;
+use crate::masternode_client::{MasternodeClient, TransactionRecord, TransactionStatus};
 use crate::peer_discovery;
 use crate::state::{AddressInfo, PeerInfo};
 use crate::wallet_dat;
@@ -79,6 +79,14 @@ pub async fn run(
     // Skip the first immediate tick — the initial discovery is already in flight
     refresh_interval.tick().await;
 
+    // Poll balance/transactions every 15 seconds as fallback when WS is down
+    let mut data_poll_interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    data_poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    data_poll_interval.tick().await;
+
+    // Channel for receiving finality check results from spawned tasks
+    let (finality_tx, mut finality_rx) = mpsc::unbounded_channel::<(String, bool, u32)>();
+
     log::info!("🚀 Service loop started ({})", state.config.network);
 
     loop {
@@ -87,6 +95,26 @@ pub async fn run(
                 log::info!("🛑 Service loop shutting down");
                 let _ = ws_shutdown_tx.send(true);
                 break;
+            }
+
+            // Periodic balance/transaction polling
+            _ = data_poll_interval.tick() => {
+                if let Some(ref client) = state.client {
+                    if !state.addresses.is_empty() {
+                        if let Ok(bal) = client.get_balances(&state.addresses).await {
+                            if let Some(ref db) = state.wallet_db {
+                                let _ = db.save_cached_balance(&bal);
+                            }
+                            let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                        }
+                        if let Ok(txs) = client.get_transactions_multi(&state.addresses, 100).await {
+                            if let Some(ref db) = state.wallet_db {
+                                let _ = db.save_cached_transactions(&txs);
+                            }
+                            let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
+                        }
+                    }
+                }
             }
 
             // Periodic peer refresh
@@ -364,7 +392,41 @@ pub async fn run(
             Some(ws_event) = ws_event_rx.recv() => {
                 match ws_event {
                     WsEvent::TransactionReceived(notification) => {
-                        let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification));
+                        // Immediately inject as a TransactionRecord for instant display
+                        let tx_record = TransactionRecord {
+                            txid: notification.txid.clone(),
+                            from: vec![],
+                            to: vec![notification.address.clone()],
+                            amount: (notification.amount * 100_000_000.0) as u64,
+                            fee: 0,
+                            timestamp: notification.timestamp,
+                            confirmations: 0,
+                            status: TransactionStatus::Pending,
+                        };
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification.clone()));
+
+                        // Spawn finality polling task
+                        if let Some(ref client) = state.client {
+                            let ftx = finality_tx.clone();
+                            let fc = client.clone();
+                            let txid = notification.txid.clone();
+                            tokio::spawn(async move {
+                                // Poll for finality every 500ms for up to 15 seconds
+                                for _ in 0..30 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                    match fc.get_transaction_finality(&txid).await {
+                                        Ok(status) if status.finalized => {
+                                            let _ = ftx.send((txid, true, status.confirmations));
+                                            return;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
+                        }
+
+                        // Also refresh balance immediately
                         if let Some(ref client) = state.client {
                             if !state.addresses.is_empty() {
                                 if let Ok(bal) = client.get_balances(&state.addresses).await {
@@ -380,6 +442,16 @@ pub async fn run(
                         let _ = state.svc_tx.send(ServiceEvent::WsDisconnected);
                     }
                 }
+            }
+
+            // Finality check results from spawned polling tasks
+            Some((txid, finalized, confirmations)) = finality_rx.recv() => {
+                log::info!("Finality update: {} finalized={} conf={}", &txid[..16.min(txid.len())], finalized, confirmations);
+                let _ = state.svc_tx.send(ServiceEvent::TransactionFinalityUpdated {
+                    txid,
+                    finalized,
+                    confirmations,
+                });
             }
         }
     }
@@ -573,6 +645,21 @@ impl ServiceState {
                     addresses: address_infos,
                     is_testnet,
                 });
+
+                // Load cached data from database for instant startup
+                if let Some(ref db) = self.wallet_db {
+                    if let Ok(Some(bal)) = db.get_cached_balance() {
+                        log::info!("Loaded cached balance from database");
+                        let _ = self.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                    }
+                    if let Ok(txs) = db.get_cached_transactions() {
+                        if !txs.is_empty() {
+                            log::info!("Loaded {} cached transactions from database", txs.len());
+                            let _ = self.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
+                        }
+                    }
+                }
+
                 self.wallet = Some(wm);
                 // Only start WS if we already have a peer connection
                 if self.config.active_endpoint.is_some() {

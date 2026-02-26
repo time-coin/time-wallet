@@ -49,6 +49,9 @@ impl Drop for App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Ensure we repaint regularly to pick up background service events
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+
         // 1. Drain all pending service events (non-blocking)
         while let Ok(event) = self.svc_rx.try_recv() {
             self.state.apply(event);

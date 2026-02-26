@@ -83,7 +83,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         ui.add_space(8.0);
 
         // Available balance
-        let available = state.balance.confirmed as f64 / 1_000_000.0;
+        let available = state.balance.confirmed as f64 / 100_000_000.0;
         ui.label(
             egui::RichText::new(format!("Available: {:.6} TIME", available))
                 .color(egui::Color32::GRAY),
@@ -107,7 +107,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         {
             let amount = parse_time_amount(&state.send_amount);
             let fee = if state.send_fee.is_empty() {
-                1_000 // default fee: 0.001 TIME
+                100_000 // default fee: 0.001 TIME
             } else {
                 parse_time_amount(&state.send_fee)
             };
@@ -144,6 +144,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 /// Parse a human-readable TIME amount (e.g. "1.5") into micro-TIME units.
 fn parse_time_amount(s: &str) -> u64 {
     s.parse::<f64>()
-        .map(|v| (v * 1_000_000.0) as u64)
+        .map(|v| (v * 100_000_000.0) as u64)
         .unwrap_or(0)
 }
