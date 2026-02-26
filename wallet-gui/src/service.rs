@@ -13,8 +13,9 @@ use crate::config_new::Config;
 use crate::events::{Screen, ServiceEvent, UiEvent};
 use crate::masternode_client::MasternodeClient;
 use crate::peer_discovery;
-use crate::state::PeerInfo;
+use crate::state::{AddressInfo, PeerInfo};
 use crate::wallet_dat;
+use crate::wallet_db::{AddressContact, WalletDb};
 use crate::wallet_manager::WalletManager;
 use crate::ws_client::{WsClient, WsEvent};
 use wallet::NetworkType;
@@ -38,10 +39,21 @@ pub async fn run(
         NetworkType::Mainnet
     };
 
+    // Open wallet metadata database
+    let db_path = config.wallet_dir().join("wallet_db");
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let wallet_db = WalletDb::open(&db_path).ok();
+    if wallet_db.is_some() {
+        log::info!("📂 Wallet database opened at: {}", db_path.display());
+    }
+
     let mut state = ServiceState {
         svc_tx,
         client: None,
         wallet: None,
+        wallet_db,
         addresses: Vec::new(),
         network_type,
         config: config.clone(),
@@ -223,6 +235,81 @@ pub async fn run(
                             "Network switch requires restart".to_string(),
                         ));
                     }
+
+                    UiEvent::UpdateAddressLabel { index, label } => {
+                        if let Some(addr) = state.addresses.get(index) {
+                            if let Some(ref db) = state.wallet_db {
+                                let now = chrono::Utc::now().timestamp();
+                                let mut contact = db
+                                    .get_contact(addr)
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| AddressContact {
+                                        address: addr.clone(),
+                                        label: String::new(),
+                                        name: None,
+                                        email: None,
+                                        phone: None,
+                                        notes: None,
+                                        is_default: index == 0,
+                                        is_owned: true,
+                                        derivation_index: Some(index as u32),
+                                        created_at: now,
+                                        updated_at: now,
+                                    });
+                                contact.label = label;
+                                contact.updated_at = now;
+                                if let Err(e) = db.save_contact(&contact) {
+                                    log::warn!("Failed to save address label: {}", e);
+                                }
+                            }
+                        }
+                    }
+
+                    UiEvent::GenerateAddress => {
+                        if let Some(ref mut wm) = state.wallet {
+                            match wm.get_next_address() {
+                                Ok(addr) => {
+                                    let index = state.addresses.len();
+                                    state.addresses.push(addr.clone());
+                                    let label = format!("Address #{}", index);
+                                    if let Some(ref db) = state.wallet_db {
+                                        let now = chrono::Utc::now().timestamp();
+                                        let contact = AddressContact {
+                                            address: addr.clone(),
+                                            label: label.clone(),
+                                            name: None,
+                                            email: None,
+                                            phone: None,
+                                            notes: None,
+                                            is_default: false,
+                                            is_owned: true,
+                                            derivation_index: Some(index as u32),
+                                            created_at: now,
+                                            updated_at: now,
+                                        };
+                                        let _ = db.save_contact(&contact);
+                                    }
+                                    let _ = state.svc_tx.send(ServiceEvent::AddressGenerated(
+                                        AddressInfo { address: addr, label },
+                                    ));
+                                    // Re-subscribe WS with updated address list
+                                    if state.config.active_endpoint.is_some() {
+                                        state.start_ws();
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = state.svc_tx.send(ServiceEvent::Error(
+                                        format!("Failed to generate address: {}", e),
+                                    ));
+                                }
+                            }
+                        } else {
+                            let _ = state.svc_tx.send(ServiceEvent::Error(
+                                "No wallet loaded".to_string(),
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -348,6 +435,7 @@ struct ServiceState {
     svc_tx: mpsc::UnboundedSender<ServiceEvent>,
     client: Option<MasternodeClient>,
     wallet: Option<WalletManager>,
+    wallet_db: Option<WalletDb>,
     addresses: Vec<String>,
     network_type: NetworkType,
     config: Config,
@@ -385,10 +473,27 @@ impl ServiceState {
     fn finish_wallet_init(&mut self, result: Result<WalletManager, wallet_dat::WalletDatError>) {
         match result {
             Ok(mut wm) => {
-                self.addresses = derive_addresses(&mut wm);
+                let raw_addrs = derive_addresses(&mut wm);
+                self.addresses = raw_addrs.clone();
+                let address_infos: Vec<AddressInfo> = raw_addrs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, addr)| {
+                        let label = self
+                            .wallet_db
+                            .as_ref()
+                            .and_then(|db| db.get_contact(addr).ok().flatten())
+                            .map(|c| c.label)
+                            .unwrap_or_else(|| format!("Address #{}", i));
+                        AddressInfo {
+                            address: addr.clone(),
+                            label,
+                        }
+                    })
+                    .collect();
                 let is_testnet = self.network_type == NetworkType::Testnet;
                 let _ = self.svc_tx.send(ServiceEvent::WalletLoaded {
-                    addresses: self.addresses.clone(),
+                    addresses: address_infos,
                     is_testnet,
                 });
                 self.wallet = Some(wm);

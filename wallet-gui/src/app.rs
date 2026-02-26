@@ -94,7 +94,7 @@ impl eframe::App for App {
                     view::send::show(ui, &mut self.state, &self.ui_tx);
                 }
                 Screen::Receive => {
-                    view::receive::show(ui, &self.state);
+                    view::receive::show(ui, &mut self.state, &self.ui_tx);
                 }
                 Screen::Transactions => {
                     view::transactions::show(ui, &self.state, &self.ui_tx);

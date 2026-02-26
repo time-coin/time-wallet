@@ -55,6 +55,9 @@ dirs = "6.0"
 # Encoding
 base64 = "0.22"
 
+# QR code generation
+qrcode = { version = "0.14", default-features = false }
+
 # Local wallet dependency from parent project
 wallet = { path = "../wallet", version = "0.1.0" }
 

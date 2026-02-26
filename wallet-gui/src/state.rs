@@ -20,6 +20,13 @@ pub struct PeerInfo {
     pub version: Option<String>,
 }
 
+/// Information about a wallet address with its user-assigned label.
+#[derive(Debug, Clone)]
+pub struct AddressInfo {
+    pub address: String,
+    pub label: String,
+}
+
 /// All application state needed for rendering.
 #[derive(Debug)]
 pub struct AppState {
@@ -28,7 +35,8 @@ pub struct AppState {
 
     // -- Wallet --
     pub wallet_loaded: bool,
-    pub addresses: Vec<String>,
+    pub addresses: Vec<AddressInfo>,
+    pub selected_address: usize,
     pub is_testnet: bool,
 
     // -- Balances --
@@ -66,6 +74,7 @@ impl Default for AppState {
             screen: Screen::Welcome,
             wallet_loaded: false,
             addresses: Vec::new(),
+            selected_address: 0,
             is_testnet: true,
             balance: Balance {
                 confirmed: 0,
@@ -102,6 +111,7 @@ impl AppState {
             } => {
                 self.wallet_loaded = true;
                 self.addresses = addresses;
+                self.selected_address = 0;
                 self.is_testnet = is_testnet;
                 self.screen = Screen::Overview;
                 self.loading = false;
@@ -168,6 +178,11 @@ impl AppState {
                 self.peers = peers;
             }
 
+            ServiceEvent::AddressGenerated(info) => {
+                self.addresses.push(info);
+                self.selected_address = self.addresses.len() - 1;
+            }
+
             ServiceEvent::Error(msg) => {
                 self.error = Some(msg);
                 self.loading = false;
@@ -193,12 +208,16 @@ mod tests {
     fn test_apply_wallet_loaded() {
         let mut state = AppState::default();
         state.apply(ServiceEvent::WalletLoaded {
-            addresses: vec!["TIME0abc".to_string()],
+            addresses: vec![AddressInfo {
+                address: "TIME0abc".to_string(),
+                label: "Address #0".to_string(),
+            }],
             is_testnet: true,
         });
         assert!(state.wallet_loaded);
         assert_eq!(state.screen, Screen::Overview);
         assert_eq!(state.addresses.len(), 1);
+        assert_eq!(state.addresses[0].address, "TIME0abc");
     }
 
     #[test]

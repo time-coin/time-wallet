@@ -4,6 +4,7 @@
 //! loop and the asynchronous service task. No shared state, no Arc, no Mutex.
 
 use crate::masternode_client::{Balance, HealthStatus, TransactionRecord, Utxo};
+use crate::state::AddressInfo;
 use crate::ws_client::TxNotification;
 
 // ============================================================================
@@ -43,6 +44,12 @@ pub enum UiEvent {
     /// Switch network (mainnet / testnet). Requires wallet reload.
     SwitchNetwork { network: String },
 
+    /// Update the label for a wallet address (persisted to local db).
+    UpdateAddressLabel { index: usize, label: String },
+
+    /// Generate a new receive address from the HD wallet.
+    GenerateAddress,
+
     /// Clean shutdown.
     Shutdown,
 }
@@ -71,7 +78,7 @@ pub enum Screen {
 pub enum ServiceEvent {
     /// Wallet loaded successfully.
     WalletLoaded {
-        addresses: Vec<String>,
+        addresses: Vec<AddressInfo>,
         is_testnet: bool,
     },
 
@@ -102,6 +109,9 @@ pub enum ServiceEvent {
 
     /// The wallet is encrypted and a password is needed to unlock it.
     PasswordRequired,
+
+    /// A new address was generated.
+    AddressGenerated(AddressInfo),
 
     /// Peer discovery results with health/ping info.
     PeersDiscovered(Vec<crate::state::PeerInfo>),
