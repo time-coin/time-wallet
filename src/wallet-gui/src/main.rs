@@ -79,6 +79,17 @@ fn main() -> Result<(), eframe::Error> {
         }),
     );
 
+    // Suppress the Tokio timer panic that fires when tasks with pending
+    // sleeps/intervals are cancelled during runtime shutdown.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info.to_string();
+        if msg.contains("is being shutdown") {
+            return;
+        }
+        default_hook(info);
+    }));
+
     // Gracefully shut down the Tokio runtime so background tasks
     // don't panic when the context disappears.
     drop(_guard);
