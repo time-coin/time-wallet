@@ -39,6 +39,8 @@ pub struct AppState {
     pub send_address: String,
     pub send_amount: String,
     pub send_fee: String,
+    pub password_required: bool,
+    pub password_input: String,
     pub error: Option<String>,
     pub success: Option<String>,
     pub loading: bool,
@@ -64,6 +66,8 @@ impl Default for AppState {
             send_address: String::new(),
             send_amount: String::new(),
             send_fee: String::new(),
+            password_required: false,
+            password_input: String::new(),
             error: None,
             success: None,
             loading: false,
@@ -86,6 +90,8 @@ impl AppState {
                 self.screen = Screen::Overview;
                 self.loading = false;
                 self.error = None;
+                self.password_required = false;
+                self.password_input.clear();
             }
 
             ServiceEvent::WalletCreated { mnemonic: _ } => {
@@ -134,6 +140,12 @@ impl AppState {
 
             ServiceEvent::WsDisconnected => {
                 self.ws_connected = false;
+            }
+
+            ServiceEvent::PasswordRequired => {
+                self.password_required = true;
+                self.loading = false;
+                self.error = None;
             }
 
             ServiceEvent::Error(msg) => {

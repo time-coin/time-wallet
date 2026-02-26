@@ -214,7 +214,14 @@ impl ServiceState {
     fn load_wallet(&mut self, password: Option<String>) {
         let result = match password {
             Some(pw) => WalletManager::load_with_password(self.network_type, &pw),
-            None => WalletManager::load(self.network_type),
+            None => {
+                // Check if encrypted first
+                if WalletManager::is_encrypted(self.network_type).unwrap_or(false) {
+                    let _ = self.svc_tx.send(ServiceEvent::PasswordRequired);
+                    return;
+                }
+                WalletManager::load(self.network_type)
+            }
         };
         self.finish_wallet_init(result);
     }

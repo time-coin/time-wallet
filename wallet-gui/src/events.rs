@@ -99,6 +99,9 @@ pub enum ServiceEvent {
     WsConnected,
     WsDisconnected,
 
+    /// The wallet is encrypted and a password is needed to unlock it.
+    PasswordRequired,
+
     /// Non-fatal error to display in the UI.
     Error(String),
 }

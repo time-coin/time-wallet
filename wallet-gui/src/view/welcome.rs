@@ -7,7 +7,7 @@ use crate::events::UiEvent;
 use crate::state::AppState;
 
 /// Render the welcome screen.
-pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
+pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
     ui.vertical_centered(|ui| {
         ui.add_space(60.0);
 
@@ -34,27 +34,61 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
 
         ui.add_space(40.0);
 
-        // Load existing wallet
-        if ui
-            .add(egui::Button::new(
-                egui::RichText::new("🔓 Open Wallet").size(16.0),
-            ).min_size(egui::vec2(200.0, 40.0)))
-            .clicked()
-        {
-            let _ = ui_tx.send(UiEvent::LoadWallet { password: None });
-        }
+        if state.password_required {
+            // Password unlock prompt
+            ui.label("This wallet is encrypted. Enter your password to unlock.");
+            ui.add_space(10.0);
 
-        ui.add_space(12.0);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut state.password_input)
+                    .password(true)
+                    .hint_text("Password")
+                    .desired_width(250.0),
+            );
 
-        // Create new wallet
-        if ui
-            .add(egui::Button::new(
-                egui::RichText::new("✨ Create New Wallet").size(16.0),
-            ).min_size(egui::vec2(200.0, 40.0)))
-            .clicked()
-        {
-            // Navigate to mnemonic setup — handled by parent
-            let _ = ui_tx.send(UiEvent::NavigatedTo(crate::events::Screen::MnemonicSetup));
+            ui.add_space(10.0);
+
+            let submitted = response.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+            let unlock_clicked = ui
+                .add(egui::Button::new(
+                    egui::RichText::new("🔓 Unlock").size(16.0),
+                ).min_size(egui::vec2(200.0, 40.0)))
+                .clicked();
+
+            if (unlock_clicked || submitted) && !state.password_input.is_empty() {
+                let _ = ui_tx.send(UiEvent::LoadWallet {
+                    password: Some(state.password_input.clone()),
+                });
+                state.loading = true;
+                state.error = None;
+            }
+
+            // Focus the password field on first show
+            response.request_focus();
+        } else {
+            // Load existing wallet
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new("🔓 Open Wallet").size(16.0),
+                ).min_size(egui::vec2(200.0, 40.0)))
+                .clicked()
+            {
+                let _ = ui_tx.send(UiEvent::LoadWallet { password: None });
+            }
+
+            ui.add_space(12.0);
+
+            // Create new wallet
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new("✨ Create New Wallet").size(16.0),
+                ).min_size(egui::vec2(200.0, 40.0)))
+                .clicked()
+            {
+                let _ = ui_tx.send(UiEvent::NavigatedTo(crate::events::Screen::MnemonicSetup));
+            }
         }
 
         ui.add_space(30.0);

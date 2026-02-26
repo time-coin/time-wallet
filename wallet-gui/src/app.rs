@@ -84,7 +84,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.state.screen {
                 Screen::Welcome | Screen::MnemonicSetup | Screen::MnemonicConfirm => {
-                    view::welcome::show(ui, &self.state, &self.ui_tx);
+                    view::welcome::show(ui, &mut self.state, &self.ui_tx);
                 }
                 Screen::Overview => {
                     view::overview::show(ui, &self.state, &self.ui_tx);
