@@ -126,4 +126,32 @@ impl Config {
         self.network = network.to_string();
         self.save()
     }
+
+    /// Fetch masternode IPs from the peer discovery API and return the first
+    /// reachable RPC endpoint (e.g. `http://1.2.3.4:24101`).
+    pub fn fetch_masternode_endpoint(&self) -> Option<String> {
+        let rpc_port = self.rpc_port;
+        match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .ok()?
+            .get(&self.api_endpoint)
+            .send()
+        {
+            Ok(resp) => {
+                if let Ok(peers) = resp.json::<Vec<String>>() {
+                    if let Some(ip) = peers.first() {
+                        let endpoint = format!("http://{}:{}", ip, rpc_port);
+                        log::info!("📡 Discovered masternode from API: {}", endpoint);
+                        return Some(endpoint);
+                    }
+                }
+                None
+            }
+            Err(e) => {
+                log::warn!("Failed to fetch peers from {}: {}", self.api_endpoint, e);
+                None
+            }
+        }
+    }
 }

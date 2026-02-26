@@ -12,6 +12,7 @@ egui_extras = { version = "0.31", features = ["image"] }
 
 # Async runtime
 tokio = { workspace = true }
+tokio-util = "0.7"
 
 # Serialization
 serde = { workspace = true }

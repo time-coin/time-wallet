@@ -9,9 +9,11 @@
 use eframe::egui;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use wallet::NetworkType;
 
 mod config;
+mod coordinator;
 mod encryption;
 mod hybrid_client; // NEW: TCP with HTTP fallback
 mod masternode_client; // NEW: Thin client for masternode communication
@@ -55,6 +57,16 @@ pub enum AppStateUpdate {
     SuccessMessage(String),
 }
 
+/// Commands sent from the UI to the background coordinator task.
+#[derive(Debug)]
+enum BackgroundCommand {
+    DiscoverPeers,
+    RefreshNetwork,
+    RefreshLatency,
+    RefreshBalance { addresses: Vec<String> },
+    SyncTransactions { addresses: Vec<String> },
+}
+
 fn main() -> Result<(), eframe::Error> {
     // Initialize tokio runtime for async network operations
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -79,19 +91,9 @@ fn main() -> Result<(), eframe::Error> {
         }),
     );
 
-    // Suppress the Tokio timer panic that fires when tasks with pending
-    // sleeps/intervals are cancelled during runtime shutdown.
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let msg = info.to_string();
-        if msg.contains("is being shutdown") {
-            return;
-        }
-        default_hook(info);
-    }));
-
-    // Gracefully shut down the Tokio runtime so background tasks
-    // don't panic when the context disappears.
+    // When eframe::run_native returns, WalletApp is dropped, which cancels the
+    // CancellationToken. The coordinator and other tasks see the cancellation and
+    // exit their loops, so shutdown_timeout completes without panics.
     drop(_guard);
     rt.shutdown_timeout(std::time::Duration::from_secs(2));
 
@@ -216,6 +218,12 @@ struct WalletApp {
     ws_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<ws_client::WsEvent>>,
     ws_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     ws_connected: bool,
+
+    // Background coordinator
+    shutdown_token: CancellationToken,
+    command_tx: mpsc::UnboundedSender<BackgroundCommand>,
+    command_rx: Option<mpsc::UnboundedReceiver<BackgroundCommand>>,
+    coordinator_resources: Arc<tokio::sync::RwLock<coordinator::CoordinatorResources>>,
 }
 
 /// Toast notification for real-time events
@@ -316,6 +324,22 @@ impl Default for WalletApp {
         };
 
         let (state_tx, state_rx) = mpsc::unbounded_channel();
+        let shutdown_token = CancellationToken::new();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+
+        let masternode_client = config
+            .fetch_masternode_endpoint()
+            .map(masternode_client::MasternodeClient::new);
+
+        let coordinator_resources = Arc::new(tokio::sync::RwLock::new(
+            coordinator::CoordinatorResources {
+                peer_manager: None,
+                network_manager: None,
+                masternode_client: masternode_client.clone(),
+                wallet_db: None,
+                state_tx: Some(state_tx.clone()),
+            },
+        ));
 
         let mut app = Self {
             current_screen: initial_screen,
@@ -344,9 +368,7 @@ impl Default for WalletApp {
             last_sync_time: None,
             is_syncing_transactions: false,
             refresh_in_progress: false,
-            masternode_client: Some(masternode_client::MasternodeClient::new(
-                config.api_endpoint.clone(), // Use api_endpoint for now
-            )),
+            masternode_client,
             network_status: "Connecting to masternode...".to_string(),
             network_manager: None,
             peer_manager: None,
@@ -379,7 +401,20 @@ impl Default for WalletApp {
             ws_event_rx: None,
             ws_shutdown_tx: None,
             ws_connected: false,
+            shutdown_token,
+            command_tx,
+            command_rx: Some(command_rx),
+            coordinator_resources,
         };
+
+        // Start the background coordinator task
+        if let Some(rx) = app.command_rx.take() {
+            coordinator::spawn(
+                app.shutdown_token.clone(),
+                rx,
+                app.coordinator_resources.clone(),
+            );
+        }
 
         // If wallet exists and is NOT encrypted, auto-load it
         if wallet_exists && !wallet_encrypted {
@@ -390,7 +425,38 @@ impl Default for WalletApp {
     }
 }
 
+impl Drop for WalletApp {
+    fn drop(&mut self) {
+        self.shutdown_token.cancel();
+    }
+}
+
 impl WalletApp {
+    /// Sync coordinator resources with current WalletApp state.
+    /// Call this after setting peer_manager, network_manager, wallet_db, or masternode_client.
+    fn sync_coordinator_resources(&self) {
+        let peer_mgr = self.peer_manager.clone();
+        let net_mgr = self.network_manager.clone();
+        let mn_client = self.masternode_client.clone();
+        let wallet_db = self.wallet_db.clone();
+        let state_tx = self.state_tx.clone();
+        let resources = self.coordinator_resources.clone();
+
+        tokio::spawn(async move {
+            let mut res = resources.write().await;
+            res.peer_manager = peer_mgr;
+            res.network_manager = net_mgr;
+            res.masternode_client = mn_client;
+            res.wallet_db = wallet_db;
+            res.state_tx = state_tx;
+        });
+    }
+
+    /// Send a command to the background coordinator.
+    fn send_command(&self, cmd: BackgroundCommand) {
+        let _ = self.command_tx.send(cmd);
+    }
+
     /// Auto-load wallet on startup (without UI context)
     fn auto_load_wallet(&mut self) {
         match WalletManager::load(self.network) {
@@ -413,6 +479,16 @@ impl WalletApp {
                                 {
                                     manager.sync_address_index(max_index);
                                     log::info!("Synced address index to {}", max_index + 1);
+                                }
+                            }
+                            // Try to update masternode client from known peers
+                            if let Ok(peers) = db.get_working_peers() {
+                                if let Some(peer) = peers.first() {
+                                    let rpc_port = peer.port + 1;
+                                    let endpoint = format!("http://{}:{}", peer.address, rpc_port);
+                                    log::info!("📡 Using masternode from DB: {}", endpoint);
+                                    self.masternode_client =
+                                        Some(masternode_client::MasternodeClient::new(endpoint));
                                 }
                             }
                             self.wallet_db = Some(db);
@@ -477,6 +553,9 @@ impl WalletApp {
                     }
 
                     self.network_status = "Connected to masternode".to_string();
+
+                    // Sync coordinator with the newly loaded wallet state
+                    self.sync_coordinator_resources();
 
                     // Optional: Auto-refresh balance on startup
                     self.trigger_manual_refresh();
@@ -947,6 +1026,9 @@ impl WalletApp {
                                     self.network_manager = Some(network_mgr.clone());
                                     self.network_status = "Connecting...".to_string();
 
+                                    // Sync coordinator with the newly set wallet state
+                                    self.sync_coordinator_resources();
+
                                     // NOTE: TCP listener will be initialized AFTER network bootstrap completes
                                     // (moved to after peer connection to ensure peers are available)
 
@@ -1016,7 +1098,7 @@ impl WalletApp {
                                         }
 
                                         // Start periodic peer maintenance
-                                        peer_mgr.clone().start_maintenance();
+                                        // (handled by coordinator via DiscoverPeers command)
 
                                         let api_endpoint = {
                                             let net = network_mgr.read().unwrap();
@@ -1043,26 +1125,7 @@ impl WalletApp {
                                                 // Trigger initial transaction sync
                                                 ctx_clone.request_repaint();
 
-                                                // Start periodic latency refresh and blockchain height update task
-                                                let network_refresh = network_mgr.clone();
-                                                tokio::spawn(async move {
-                                                    loop {
-                                                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                                                        log::debug!("Running scheduled refresh");
-
-                                                        // Run periodic refresh (latency, version, blockchain height)
-                                                        let network_clone = network_refresh.clone();
-
-                                                        // Note: Using spawn_blocking since RwLock is synchronous
-                                                        tokio::task::spawn_blocking(move || {
-                                                            if let Ok(manager) = network_clone.write() {
-                                                                // Note: periodic_refresh is async but we can't await in spawn_blocking
-                                                                // This will be properly handled in Phase 3 thin client migration
-                                                                log::debug!("Periodic refresh triggered");
-                                                            }
-                                                        });
-                                                    }
-                                                });
+                                                // Network refresh is now handled by the coordinator
                                             }
                                             Err(e) => {
                                                 log::error!("Network bootstrap failed: {}", e);
@@ -1149,6 +1212,12 @@ impl WalletApp {
                                         log::info!("Initializing network after wallet unlock...");
                                         self.initialize_network();
                                     }
+
+                                    // Sync coordinator with the newly loaded wallet state
+                                    self.sync_coordinator_resources();
+
+                                    // Refresh balance on unlock
+                                    self.trigger_manual_refresh();
 
                                     // Start WebSocket for real-time notifications
                                     self.start_ws_client();
@@ -1537,6 +1606,9 @@ impl WalletApp {
                     self.network_manager = Some(network_mgr.clone());
                     self.network_status = "Connecting...".to_string();
 
+                    // Sync coordinator with the newly set wallet state
+                    self.sync_coordinator_resources();
+
                     // Bootstrap network - fetch peers and connect
                     let bootstrap_nodes = main_config.bootstrap_nodes.clone();
                     let addnodes = main_config.addnode.clone();
@@ -1645,28 +1717,7 @@ impl WalletApp {
                             .ok();
                             log::info!("Connection task completed");
 
-                            // Start periodic latency refresh
-                            let network_mgr_for_ping = network_mgr_clone.clone();
-                            tokio::task::spawn_blocking(move || {
-                                let rt = tokio::runtime::Handle::current();
-                                #[allow(clippy::await_holding_lock)]
-                                rt.block_on(async {
-                                    // Wait before first ping
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-
-                                    loop {
-                                        log::debug!("Refreshing peer latencies...");
-                                        {
-                                            let mut net = network_mgr_for_ping.write().unwrap();
-                                            let _ = net.refresh_peer_latencies().await;
-                                        }
-
-                                        // Ping every 2 minutes
-                                        tokio::time::sleep(tokio::time::Duration::from_secs(120))
-                                            .await;
-                                    }
-                                });
-                            });
+                            // Latency refresh is now handled by the coordinator
                         } else {
                             log::warn!("No peer info available to connect");
                         }
@@ -3783,6 +3834,9 @@ impl WalletApp {
 
                 self.network_manager = Some(network_mgr);
                 self.network_status = "Connecting...".to_string();
+
+                // Sync coordinator with the newly set state
+                self.sync_coordinator_resources();
             }
 
             // Start network bootstrap
@@ -3894,27 +3948,7 @@ impl WalletApp {
                         .ok();
                         log::info!("Connection task completed");
 
-                        // Start periodic latency refresh
-                        let network_mgr_for_ping = network_mgr.clone();
-                        tokio::task::spawn_blocking(move || {
-                            let rt = tokio::runtime::Handle::current();
-                            #[allow(clippy::await_holding_lock)]
-                            rt.block_on(async {
-                                // Wait before first ping
-                                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-
-                                loop {
-                                    log::debug!("Refreshing peer latencies...");
-                                    {
-                                        let mut net = network_mgr_for_ping.write().unwrap();
-                                        let _ = net.refresh_peer_latencies().await;
-                                    }
-
-                                    // Ping every 2 minutes
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(120)).await;
-                                }
-                            });
-                        });
+                        // Latency refresh is now handled by the coordinator
                     } else {
                         log::warn!("No peer info available to connect");
                     }
@@ -4263,116 +4297,14 @@ impl WalletApp {
             return;
         };
 
-        let masternode_client = if let Some(client) = &self.masternode_client {
-            client.clone()
-        } else {
-            log::warn!("No masternode client available");
-            self.refresh_in_progress = false;
-            return;
-        };
-
-        let wallet_db = self.wallet_db.clone();
-        let state_tx = self.state_tx.clone();
-
-        // Spawn simple refresh task (just TWO HTTP calls!)
-        tokio::spawn(async move {
-            log::info!("📡 Fetching balance and transactions from masternode...");
-
-            // 1. Get balance across all derived addresses (one JSON-RPC call)
-            match masternode_client.get_balances(&addresses).await {
-                Ok(balance) => {
-                    log::info!(
-                        "✅ Balance: {} TIME (confirmed: {}, pending: {})",
-                        balance.total,
-                        balance.confirmed,
-                        balance.pending
-                    );
-
-                    // Send to UI via channel
-                    if let Some(tx) = &state_tx {
-                        let _ = tx.send(AppStateUpdate::BalanceUpdated(balance.total));
-                    }
-                }
-                Err(e) => {
-                    log::error!("❌ Failed to fetch balance: {}", e);
-                    if let Some(tx) = &state_tx {
-                        let _ = tx.send(AppStateUpdate::ErrorOccurred(format!(
-                            "Failed to fetch balance: {}",
-                            e
-                        )));
-                    }
-                }
-            }
-
-            // 2. Get transactions for all wallet addresses (batch query)
-            match masternode_client
-                .get_transactions_multi(&addresses, 1000)
-                .await
-            {
-                Ok(transactions) => {
-                    log::info!(
-                        "✅ Received {} transactions from masternode",
-                        transactions.len()
-                    );
-
-                    // Save to local database
-                    if let Some(db) = &wallet_db {
-                        for tx in transactions {
-                            let tx_record = wallet_db::TransactionRecord {
-                                tx_hash: tx.txid.clone(),
-                                from_address: tx.from.first().cloned(),
-                                to_address: tx.to.first().cloned().unwrap_or_default(),
-                                amount: tx.amount,
-                                timestamp: tx.timestamp,
-                                block_height: Some(tx.confirmations as u64),
-                                status: match tx.status {
-                                    masternode_client::TransactionStatus::Confirmed => {
-                                        wallet_db::TransactionStatus::Confirmed
-                                    }
-                                    masternode_client::TransactionStatus::Pending => {
-                                        wallet_db::TransactionStatus::Pending
-                                    }
-                                    masternode_client::TransactionStatus::Failed => {
-                                        wallet_db::TransactionStatus::Confirmed
-                                    } // Map to confirmed for now
-                                },
-                                notes: None,
-                            };
-
-                            if let Err(e) = db.save_transaction(&tx_record) {
-                                log::warn!("Failed to save transaction: {}", e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!("❌ Failed to fetch transactions: {}", e);
-                    if let Some(tx) = &state_tx {
-                        let _ = tx.send(AppStateUpdate::ErrorOccurred(format!(
-                            "Failed to fetch transactions: {}",
-                            e
-                        )));
-                    }
-                }
-            }
-
-            // Signal completion
-            if let Some(tx) = &state_tx {
-                let _ = tx.send(AppStateUpdate::SyncCompleted);
-            }
-
-            log::info!("✅ Manual refresh completed (thin client)");
+        // Send commands to the background coordinator
+        self.send_command(BackgroundCommand::RefreshBalance {
+            addresses: addresses.clone(),
         });
+        self.send_command(BackgroundCommand::SyncTransactions { addresses });
 
         // Update last sync time
         self.last_sync_time = Some(std::time::Instant::now());
-
-        // Reset refresh flag after delay
-        let self_refresh = self.refresh_in_progress;
-        tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            // Note: refresh_in_progress will be set to false when SyncCompleted is received
-        });
 
         self.set_success("Refreshing wallet data from masternode...".to_string());
     }
