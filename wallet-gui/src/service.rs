@@ -29,9 +29,236 @@ pub async fn run(
     svc_tx: mpsc::UnboundedSender<ServiceEvent>,
     mut config: Config,
 ) {
-    // Discover peers: manual first, then API
-    let mut endpoints = config.manual_endpoints();
-    match peer_discovery::fetch_peers(config.is_testnet()).await {
+    let (ws_event_tx, mut ws_event_rx) = mpsc::unbounded_channel::<WsEvent>();
+    let (ws_shutdown_tx, ws_shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let network_type = if config.is_testnet() {
+        NetworkType::Testnet
+    } else {
+        NetworkType::Mainnet
+    };
+
+    let mut state = ServiceState {
+        svc_tx,
+        client: None,
+        wallet: None,
+        addresses: Vec::new(),
+        network_type,
+        config: config.clone(),
+        ws_event_tx,
+        ws_shutdown_rx,
+        ws_handle: None,
+    };
+
+    // Kick off peer discovery in the background
+    let discovery_svc_tx = state.svc_tx.clone();
+    let is_testnet = config.is_testnet();
+    let manual_endpoints = config.manual_endpoints();
+    let mut discovery_handle = Some(tokio::spawn(async move {
+        discover_peers(is_testnet, manual_endpoints, &discovery_svc_tx).await
+    }));
+
+    log::info!("🚀 Service loop started ({})", state.config.network);
+
+    loop {
+        tokio::select! {
+            _ = token.cancelled() => {
+                log::info!("🛑 Service loop shutting down");
+                let _ = ws_shutdown_tx.send(true);
+                break;
+            }
+
+            // Peer discovery completes in the background
+            Some(result) = async {
+                if let Some(ref mut handle) = discovery_handle {
+                    Some(handle.await)
+                } else {
+                    std::future::pending::<Option<Result<Result<(String, Vec<PeerInfo>), ()>, tokio::task::JoinError>>>().await
+                }
+            } => {
+                discovery_handle = None;
+                if let Ok(Ok((endpoint, peer_infos))) = result {
+                    let _ = state.svc_tx.send(ServiceEvent::PeersDiscovered(peer_infos));
+                    log::info!("🔗 Using peer: {}", endpoint);
+                    state.client = Some(MasternodeClient::new(endpoint.clone()));
+                    config.active_endpoint = Some(endpoint.clone());
+
+                    // If wallet is already loaded, fetch initial data
+                    if !state.addresses.is_empty() {
+                        if let Some(ref client) = state.client {
+                            if let Ok(bal) = client.get_balances(&state.addresses).await {
+                                let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                            }
+                        }
+                    }
+                }
+            }
+
+            Some(event) = ui_rx.recv() => {
+                match event {
+                    UiEvent::Shutdown => {
+                        let _ = ws_shutdown_tx.send(true);
+                        break;
+                    }
+
+                    UiEvent::LoadWallet { password } => {
+                        state.load_wallet(password);
+                    }
+
+                    UiEvent::CreateWallet { mnemonic, password } => {
+                        state.create_wallet(&mnemonic, password);
+                    }
+
+                    UiEvent::RefreshBalance => {
+                        if let Some(ref client) = state.client {
+                            if !state.addresses.is_empty() {
+                                match client.get_balances(&state.addresses).await {
+                                    Ok(balance) => { let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(balance)); }
+                                    Err(e) => { let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string())); }
+                                }
+                            }
+                        }
+                    }
+
+                    UiEvent::RefreshTransactions => {
+                        if let Some(ref client) = state.client {
+                            if !state.addresses.is_empty() {
+                                match client.get_transactions_multi(&state.addresses, 100).await {
+                                    Ok(txs) => { let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(txs)); }
+                                    Err(e) => { let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string())); }
+                                }
+                            }
+                        }
+                    }
+
+                    UiEvent::RefreshUtxos => {
+                        if let Some(ref client) = state.client {
+                            let mut all_utxos = Vec::new();
+                            for addr in &state.addresses {
+                                match client.get_utxos(addr).await {
+                                    Ok(utxos) => all_utxos.extend(utxos),
+                                    Err(e) => {
+                                        let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string()));
+                                        break;
+                                    }
+                                }
+                            }
+                            let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(all_utxos));
+                        }
+                    }
+
+                    UiEvent::SendTransaction { to, amount, fee } => {
+                        if let Some(ref client) = state.client {
+                            if let Some(ref mut wm) = state.wallet {
+                                match wm.create_transaction(&to, amount, fee) {
+                                    Ok(tx) => {
+                                        let tx_hex = serde_json::to_string(&tx).unwrap_or_default();
+                                        match client.broadcast_transaction(&tx_hex).await {
+                                            Ok(txid) => {
+                                                let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid });
+                                            }
+                                            Err(e) => {
+                                                let _ = state.svc_tx.send(ServiceEvent::Error(
+                                                    format!("Broadcast failed: {}", e),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let _ = state.svc_tx.send(ServiceEvent::Error(
+                                            format!("Failed to create transaction: {}", e),
+                                        ));
+                                    }
+                                }
+                            } else {
+                                let _ = state.svc_tx.send(ServiceEvent::Error("No wallet loaded".to_string()));
+                            }
+                        } else {
+                            let _ = state.svc_tx.send(ServiceEvent::Error("Not connected to any peer".to_string()));
+                        }
+                    }
+
+                    UiEvent::NavigatedTo(screen) => {
+                        if let Some(ref client) = state.client {
+                            if !state.addresses.is_empty() {
+                                match screen {
+                                    Screen::Overview => {
+                                        if let Ok(bal) = client.get_balances(&state.addresses).await {
+                                            let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                                        }
+                                    }
+                                    Screen::Transactions => {
+                                        if let Ok(txs) = client.get_transactions_multi(&state.addresses, 100).await {
+                                            let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
+                                        }
+                                    }
+                                    Screen::Utxos => {
+                                        let mut all = Vec::new();
+                                        for addr in &state.addresses {
+                                            if let Ok(utxos) = client.get_utxos(addr).await {
+                                                all.extend(utxos);
+                                            }
+                                        }
+                                        let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(all));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+
+                    UiEvent::CheckHealth => {
+                        if let Some(ref client) = state.client {
+                            match client.health_check().await {
+                                Ok(health) => { let _ = state.svc_tx.send(ServiceEvent::HealthUpdated(health)); }
+                                Err(e) => { let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string())); }
+                            }
+                        }
+                    }
+
+                    UiEvent::SwitchNetwork { network: _ } => {
+                        let _ = state.svc_tx.send(ServiceEvent::Error(
+                            "Network switch requires restart".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            Some(ws_event) = ws_event_rx.recv() => {
+                match ws_event {
+                    WsEvent::TransactionReceived(notification) => {
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification));
+                        if let Some(ref client) = state.client {
+                            if !state.addresses.is_empty() {
+                                if let Ok(bal) = client.get_balances(&state.addresses).await {
+                                    let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                                }
+                            }
+                        }
+                    }
+                    WsEvent::Connected(_) => {
+                        let _ = state.svc_tx.send(ServiceEvent::WsConnected);
+                    }
+                    WsEvent::Disconnected(_) => {
+                        let _ = state.svc_tx.send(ServiceEvent::WsDisconnected);
+                    }
+                }
+            }
+        }
+    }
+
+    log::info!("👋 Service loop exited");
+}
+
+/// Discover and health-check peers in the background.
+/// Returns the best endpoint and the full peer info list.
+async fn discover_peers(
+    is_testnet: bool,
+    manual_endpoints: Vec<String>,
+    svc_tx: &mpsc::UnboundedSender<ServiceEvent>,
+) -> Result<(String, Vec<PeerInfo>), ()> {
+    let mut endpoints = manual_endpoints;
+    match peer_discovery::fetch_peers(is_testnet).await {
         Ok(api_peers) => {
             log::info!("🌐 API returned {} peers", api_peers.len());
             endpoints.extend(api_peers);
@@ -41,7 +268,6 @@ pub async fn run(
         }
     }
 
-    // Deduplicate
     endpoints.sort();
     endpoints.dedup();
 
@@ -49,12 +275,10 @@ pub async fn run(
         let _ = svc_tx.send(ServiceEvent::Error(
             "No peers available. Add peers to config.toml or check your internet connection.".to_string(),
         ));
-        return;
+        return Err(());
     }
 
-    // Health-check all peers and collect info
     let mut peer_infos = Vec::new();
-
     for endpoint in &endpoints {
         let client = MasternodeClient::new(endpoint.clone());
         let start = Instant::now();
@@ -76,13 +300,12 @@ pub async fn run(
         });
     }
 
-    // Sort: healthy first by fastest ping, unhealthy last
+    // Sort: healthy first by fastest ping
     peer_infos.sort_by(|a, b| {
         b.is_healthy.cmp(&a.is_healthy)
             .then(a.ping_ms.unwrap_or(u64::MAX).cmp(&b.ping_ms.unwrap_or(u64::MAX)))
     });
 
-    // Select the fastest healthy peer
     let active_endpoint = peer_infos
         .iter()
         .find(|p| p.is_healthy)
@@ -96,185 +319,13 @@ pub async fn run(
         p.is_active = p.endpoint == active_endpoint;
     }
 
-    let _ = svc_tx.send(ServiceEvent::PeersDiscovered(peer_infos));
-
-    log::info!("🔗 Using peer: {}", active_endpoint);
-    let client = MasternodeClient::new(active_endpoint.clone());
-    config.active_endpoint = Some(active_endpoint);
-
-    let (ws_event_tx, mut ws_event_rx) = mpsc::unbounded_channel::<WsEvent>();
-    let (ws_shutdown_tx, ws_shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let network_type = if config.is_testnet() {
-        NetworkType::Testnet
-    } else {
-        NetworkType::Mainnet
-    };
-
-    let mut state = ServiceState {
-        svc_tx,
-        wallet: None,
-        addresses: Vec::new(),
-        network_type,
-        config,
-        ws_event_tx,
-        ws_shutdown_rx,
-        ws_handle: None,
-    };
-
-    log::info!("🚀 Service loop started ({})", state.config.network);
-
-    loop {
-        tokio::select! {
-            _ = token.cancelled() => {
-                log::info!("🛑 Service loop shutting down");
-                let _ = ws_shutdown_tx.send(true);
-                break;
-            }
-
-            Some(event) = ui_rx.recv() => {
-                match event {
-                    UiEvent::Shutdown => {
-                        let _ = ws_shutdown_tx.send(true);
-                        break;
-                    }
-
-                    UiEvent::LoadWallet { password } => {
-                        state.load_wallet(password);
-                    }
-
-                    UiEvent::CreateWallet { mnemonic, password } => {
-                        state.create_wallet(&mnemonic, password);
-                    }
-
-                    UiEvent::RefreshBalance => {
-                        if !state.addresses.is_empty() {
-                            match client.get_balances(&state.addresses).await {
-                                Ok(balance) => { let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(balance)); }
-                                Err(e) => { let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string())); }
-                            }
-                        }
-                    }
-
-                    UiEvent::RefreshTransactions => {
-                        if !state.addresses.is_empty() {
-                            match client.get_transactions_multi(&state.addresses, 100).await {
-                                Ok(txs) => { let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(txs)); }
-                                Err(e) => { let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string())); }
-                            }
-                        }
-                    }
-
-                    UiEvent::RefreshUtxos => {
-                        let mut all_utxos = Vec::new();
-                        for addr in &state.addresses {
-                            match client.get_utxos(addr).await {
-                                Ok(utxos) => all_utxos.extend(utxos),
-                                Err(e) => {
-                                    let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string()));
-                                    break;
-                                }
-                            }
-                        }
-                        let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(all_utxos));
-                    }
-
-                    UiEvent::SendTransaction { to, amount, fee } => {
-                        if let Some(ref mut wm) = state.wallet {
-                            match wm.create_transaction(&to, amount, fee) {
-                                Ok(tx) => {
-                                    let tx_hex = serde_json::to_string(&tx).unwrap_or_default();
-                                    match client.broadcast_transaction(&tx_hex).await {
-                                        Ok(txid) => {
-                                            let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid });
-                                        }
-                                        Err(e) => {
-                                            let _ = state.svc_tx.send(ServiceEvent::Error(
-                                                format!("Broadcast failed: {}", e),
-                                            ));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = state.svc_tx.send(ServiceEvent::Error(
-                                        format!("Failed to create transaction: {}", e),
-                                    ));
-                                }
-                            }
-                        } else {
-                            let _ = state.svc_tx.send(ServiceEvent::Error("No wallet loaded".to_string()));
-                        }
-                    }
-
-                    UiEvent::NavigatedTo(screen) => {
-                        if !state.addresses.is_empty() {
-                            match screen {
-                                Screen::Overview => {
-                                    if let Ok(bal) = client.get_balances(&state.addresses).await {
-                                        let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
-                                    }
-                                }
-                                Screen::Transactions => {
-                                    if let Ok(txs) = client.get_transactions_multi(&state.addresses, 100).await {
-                                        let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
-                                    }
-                                }
-                                Screen::Utxos => {
-                                    let mut all = Vec::new();
-                                    for addr in &state.addresses {
-                                        if let Ok(utxos) = client.get_utxos(addr).await {
-                                            all.extend(utxos);
-                                        }
-                                    }
-                                    let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(all));
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-
-                    UiEvent::CheckHealth => {
-                        match client.health_check().await {
-                            Ok(health) => { let _ = state.svc_tx.send(ServiceEvent::HealthUpdated(health)); }
-                            Err(e) => { let _ = state.svc_tx.send(ServiceEvent::Error(e.to_string())); }
-                        }
-                    }
-
-                    UiEvent::SwitchNetwork { network: _ } => {
-                        let _ = state.svc_tx.send(ServiceEvent::Error(
-                            "Network switch requires restart".to_string(),
-                        ));
-                    }
-                }
-            }
-
-            Some(ws_event) = ws_event_rx.recv() => {
-                match ws_event {
-                    WsEvent::TransactionReceived(notification) => {
-                        let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification));
-                        if !state.addresses.is_empty() {
-                            if let Ok(bal) = client.get_balances(&state.addresses).await {
-                                let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
-                            }
-                        }
-                    }
-                    WsEvent::Connected(_) => {
-                        let _ = state.svc_tx.send(ServiceEvent::WsConnected);
-                    }
-                    WsEvent::Disconnected(_) => {
-                        let _ = state.svc_tx.send(ServiceEvent::WsDisconnected);
-                    }
-                }
-            }
-        }
-    }
-
-    log::info!("👋 Service loop exited");
+    Ok((active_endpoint, peer_infos))
 }
 
 /// Mutable state owned by the service loop.
 struct ServiceState {
     svc_tx: mpsc::UnboundedSender<ServiceEvent>,
+    client: Option<MasternodeClient>,
     wallet: Option<WalletManager>,
     addresses: Vec<String>,
     network_type: NetworkType,

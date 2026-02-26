@@ -4,23 +4,21 @@ use egui::Ui;
 
 use crate::state::AppState;
 
+/// Extract the IP from an endpoint like "http://1.2.3.4:24001".
+fn peer_ip(endpoint: &str) -> &str {
+    let s = endpoint
+        .strip_prefix("http://")
+        .or_else(|| endpoint.strip_prefix("https://"))
+        .unwrap_or(endpoint);
+    // Strip port
+    s.rsplit_once(':').map(|(host, _)| host).unwrap_or(s)
+}
+
 /// Render the connections screen.
 pub fn show(ui: &mut Ui, state: &AppState) {
     ui.heading("Connections");
     ui.separator();
     ui.add_space(10.0);
-
-    // WebSocket status
-    ui.horizontal(|ui| {
-        ui.label("WebSocket:");
-        if state.ws_connected {
-            ui.colored_label(egui::Color32::GREEN, "● Connected");
-        } else {
-            ui.colored_label(egui::Color32::RED, "● Disconnected");
-        }
-    });
-
-    ui.add_space(15.0);
 
     if state.peers.is_empty() {
         ui.label(
@@ -32,62 +30,39 @@ pub fn show(ui: &mut Ui, state: &AppState) {
         return;
     }
 
-    ui.label(format!("{} peers discovered", state.peers.len()));
+    ui.label(format!("{} peers", state.peers.len()));
     ui.add_space(10.0);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         for peer in &state.peers {
-            ui.group(|ui| {
-                ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    // Status indicator
-                    if peer.is_active {
-                        ui.label(egui::RichText::new("★").color(egui::Color32::GOLD));
-                    }
-
-                    let status_color = if peer.is_healthy {
+            ui.horizontal(|ui| {
+                // Colored dot based on ping
+                let dot_color = if !peer.is_healthy {
+                    egui::Color32::RED
+                } else if let Some(ms) = peer.ping_ms {
+                    if ms < 100 {
                         egui::Color32::GREEN
+                    } else if ms < 500 {
+                        egui::Color32::YELLOW
                     } else {
                         egui::Color32::RED
-                    };
-                    ui.colored_label(status_color, "●");
+                    }
+                } else {
+                    egui::Color32::GRAY
+                };
+                ui.colored_label(dot_color, "●");
 
-                    // Endpoint
-                    ui.label(
-                        egui::RichText::new(&peer.endpoint)
-                            .monospace()
-                            .strong(),
-                    );
+                // IP address
+                let ip = peer_ip(&peer.endpoint);
+                ui.label(egui::RichText::new(ip).monospace());
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Ping
-                        if let Some(ms) = peer.ping_ms {
-                            let ping_color = if ms < 100 {
-                                egui::Color32::GREEN
-                            } else if ms < 500 {
-                                egui::Color32::YELLOW
-                            } else {
-                                egui::Color32::RED
-                            };
-                            ui.colored_label(ping_color, format!("{}ms", ms));
-                        } else {
-                            ui.colored_label(egui::Color32::GRAY, "—");
-                        }
-
-                        // Block height
-                        if let Some(height) = peer.block_height {
-                            ui.label(format!("#{}", height));
-                        }
-
-                        // Version
-                        if let Some(ref ver) = peer.version {
-                            ui.label(
-                                egui::RichText::new(ver)
-                                    .color(egui::Color32::GRAY)
-                                    .small(),
-                            );
-                        }
-                    });
+                // Ping on the right
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(ms) = peer.ping_ms {
+                        ui.label(format!("{}ms", ms));
+                    } else {
+                        ui.colored_label(egui::Color32::GRAY, "—");
+                    }
                 });
             });
         }
