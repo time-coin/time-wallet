@@ -81,10 +81,12 @@ pub async fn run(
                     let _ = state.svc_tx.send(ServiceEvent::PeersDiscovered(peer_infos));
                     log::info!("🔗 Using peer: {}", endpoint);
                     state.client = Some(MasternodeClient::new(endpoint.clone()));
-                    config.active_endpoint = Some(endpoint.clone());
+                    state.config.active_endpoint = Some(endpoint.clone());
+                    config.active_endpoint = Some(endpoint);
 
-                    // If wallet is already loaded, fetch initial data
+                    // If wallet is already loaded, start WS and fetch data
                     if !state.addresses.is_empty() {
+                        state.start_ws();
                         if let Some(ref client) = state.client {
                             if let Ok(bal) = client.get_balances(&state.addresses).await {
                                 let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
@@ -290,19 +292,38 @@ async fn discover_peers(
             Err(_) => (false, None, None, None),
         };
 
+        // Probe WebSocket connectivity
+        let ws_available = if is_healthy {
+            let ws_url = endpoint
+                .replacen("https://", "wss://", 1)
+                .replacen("http://", "ws://", 1)
+                + "/ws";
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio_tungstenite::connect_async(&ws_url),
+            )
+            .await
+            .map(|r| r.is_ok())
+            .unwrap_or(false)
+        } else {
+            false
+        };
+
         peer_infos.push(PeerInfo {
             endpoint: endpoint.clone(),
             is_active: false,
             is_healthy,
+            ws_available,
             ping_ms,
             block_height,
             version,
         });
     }
 
-    // Sort: healthy first by fastest ping
+    // Sort: WS-capable first, then healthy by fastest ping, unhealthy last
     peer_infos.sort_by(|a, b| {
         b.is_healthy.cmp(&a.is_healthy)
+            .then(b.ws_available.cmp(&a.ws_available))
             .then(a.ping_ms.unwrap_or(u64::MAX).cmp(&b.ping_ms.unwrap_or(u64::MAX)))
     });
 
@@ -371,7 +392,10 @@ impl ServiceState {
                     is_testnet,
                 });
                 self.wallet = Some(wm);
-                self.start_ws();
+                // Only start WS if we already have a peer connection
+                if self.config.active_endpoint.is_some() {
+                    self.start_ws();
+                }
             }
             Err(e) => {
                 let _ = self.svc_tx.send(ServiceEvent::Error(format!("Wallet error: {}", e)));

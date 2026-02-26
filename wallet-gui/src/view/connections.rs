@@ -56,6 +56,13 @@ pub fn show(ui: &mut Ui, state: &AppState) {
                 let ip = peer_ip(&peer.endpoint);
                 ui.label(egui::RichText::new(ip).monospace());
 
+                // WS status
+                if peer.ws_available {
+                    ui.colored_label(egui::Color32::GREEN, "WS");
+                } else if peer.is_healthy {
+                    ui.colored_label(egui::Color32::GRAY, "WS");
+                }
+
                 // Ping on the right
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(ms) = peer.ping_ms {

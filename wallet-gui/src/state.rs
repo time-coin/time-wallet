@@ -14,6 +14,7 @@ pub struct PeerInfo {
     pub endpoint: String,
     pub is_active: bool,
     pub is_healthy: bool,
+    pub ws_available: bool,
     pub ping_ms: Option<u64>,
     pub block_height: Option<u64>,
     pub version: Option<String>,
