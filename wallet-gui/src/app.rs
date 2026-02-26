@@ -76,6 +76,7 @@ impl eframe::App for App {
                 nav_button(ui, &mut self.state, "📥 Receive", Screen::Receive, &self.ui_tx);
                 nav_button(ui, &mut self.state, "📋 Transactions", Screen::Transactions, &self.ui_tx);
                 ui.separator();
+                nav_button(ui, &mut self.state, "🔗 Connections", Screen::Connections, &self.ui_tx);
                 nav_button(ui, &mut self.state, "⚙ Settings", Screen::Settings, &self.ui_tx);
             }
         });
@@ -100,6 +101,9 @@ impl eframe::App for App {
                 }
                 Screen::Settings => {
                     view::settings::show(ui, &self.state);
+                }
+                Screen::Connections => {
+                    view::connections::show(ui, &self.state);
                 }
                 Screen::Utxos => {
                     view::overview::show(ui, &self.state, &self.ui_tx);

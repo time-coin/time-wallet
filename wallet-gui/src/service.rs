@@ -7,10 +7,13 @@
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use std::time::Instant;
+
 use crate::config_new::Config;
 use crate::events::{Screen, ServiceEvent, UiEvent};
 use crate::masternode_client::MasternodeClient;
 use crate::peer_discovery;
+use crate::state::PeerInfo;
 use crate::wallet_dat;
 use crate::wallet_manager::WalletManager;
 use crate::ws_client::{WsClient, WsEvent};
@@ -38,6 +41,10 @@ pub async fn run(
         }
     }
 
+    // Deduplicate
+    endpoints.sort();
+    endpoints.dedup();
+
     if endpoints.is_empty() {
         let _ = svc_tx.send(ServiceEvent::Error(
             "No peers available. Add peers to config.toml or check your internet connection.".to_string(),
@@ -45,7 +52,52 @@ pub async fn run(
         return;
     }
 
-    let active_endpoint = peer_discovery::select_best_peer(&endpoints).await;
+    // Health-check all peers and collect info
+    let mut peer_infos = Vec::new();
+
+    for endpoint in &endpoints {
+        let client = MasternodeClient::new(endpoint.clone());
+        let start = Instant::now();
+        let (is_healthy, ping_ms, block_height, version) = match client.health_check().await {
+            Ok(health) => {
+                let ms = start.elapsed().as_millis() as u64;
+                (true, Some(ms), Some(health.block_height), Some(health.version))
+            }
+            Err(_) => (false, None, None, None),
+        };
+
+        peer_infos.push(PeerInfo {
+            endpoint: endpoint.clone(),
+            is_active: false,
+            is_healthy,
+            ping_ms,
+            block_height,
+            version,
+        });
+    }
+
+    // Sort: healthy first by fastest ping, unhealthy last
+    peer_infos.sort_by(|a, b| {
+        b.is_healthy.cmp(&a.is_healthy)
+            .then(a.ping_ms.unwrap_or(u64::MAX).cmp(&b.ping_ms.unwrap_or(u64::MAX)))
+    });
+
+    // Select the fastest healthy peer
+    let active_endpoint = peer_infos
+        .iter()
+        .find(|p| p.is_healthy)
+        .map(|p| p.endpoint.clone())
+        .unwrap_or_else(|| {
+            log::warn!("⚠ No peers responded to health check, using first peer");
+            endpoints[0].clone()
+        });
+
+    for p in &mut peer_infos {
+        p.is_active = p.endpoint == active_endpoint;
+    }
+
+    let _ = svc_tx.send(ServiceEvent::PeersDiscovered(peer_infos));
+
     log::info!("🔗 Using peer: {}", active_endpoint);
     let client = MasternodeClient::new(active_endpoint.clone());
     config.active_endpoint = Some(active_endpoint);

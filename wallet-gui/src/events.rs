@@ -58,6 +58,7 @@ pub enum Screen {
     Receive,
     Transactions,
     Utxos,
+    Connections,
     Settings,
 }
 
@@ -101,6 +102,9 @@ pub enum ServiceEvent {
 
     /// The wallet is encrypted and a password is needed to unlock it.
     PasswordRequired,
+
+    /// Peer discovery results with health/ping info.
+    PeersDiscovered(Vec<crate::state::PeerInfo>),
 
     /// Non-fatal error to display in the UI.
     Error(String),

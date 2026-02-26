@@ -100,26 +100,6 @@ async fn fetch_from_api(is_testnet: bool) -> Result<Vec<String>, PeerDiscoveryEr
     Ok(endpoints)
 }
 
-/// Select the best peer from a list by checking health.
-///
-/// Returns the first peer that responds to a health check, or the first
-/// peer in the list if none respond (optimistic fallback).
-pub async fn select_best_peer(endpoints: &[String]) -> String {
-    use crate::masternode_client::MasternodeClient;
-
-    for endpoint in endpoints {
-        let client = MasternodeClient::new(endpoint.clone());
-        if client.health_check().await.is_ok() {
-            log::info!("✅ Selected peer: {}", endpoint);
-            return endpoint.clone();
-        }
-    }
-
-    // Fallback to the first peer if none responded
-    log::warn!("⚠ No peers responded to health check, using first peer");
-    endpoints[0].clone()
-}
-
 // ============================================================================
 // Cache
 // ============================================================================

@@ -8,6 +8,17 @@ use crate::events::{Screen, ServiceEvent};
 use crate::masternode_client::{Balance, HealthStatus, TransactionRecord, Utxo};
 use crate::ws_client::TxNotification;
 
+/// Information about a discovered peer.
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub endpoint: String,
+    pub is_active: bool,
+    pub is_healthy: bool,
+    pub ping_ms: Option<u64>,
+    pub block_height: Option<u64>,
+    pub version: Option<String>,
+}
+
 /// All application state needed for rendering.
 #[derive(Debug)]
 pub struct AppState {
@@ -31,6 +42,7 @@ pub struct AppState {
     // -- Masternode --
     pub health: Option<HealthStatus>,
     pub ws_connected: bool,
+    pub peers: Vec<PeerInfo>,
 
     // -- Notifications (real-time from WebSocket) --
     pub recent_notifications: Vec<TxNotification>,
@@ -63,6 +75,7 @@ impl Default for AppState {
             utxos: Vec::new(),
             health: None,
             ws_connected: false,
+            peers: Vec::new(),
             recent_notifications: Vec::new(),
             send_address: String::new(),
             send_amount: String::new(),
@@ -148,6 +161,10 @@ impl AppState {
                 self.password_required = true;
                 self.loading = false;
                 self.error = None;
+            }
+
+            ServiceEvent::PeersDiscovered(peers) => {
+                self.peers = peers;
             }
 
             ServiceEvent::Error(msg) => {
