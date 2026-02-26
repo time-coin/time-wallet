@@ -1,36 +1,16 @@
 //! Wallet Manager
 //!
 //! Manages time-wallet.dat file and provides high-level wallet operations
+//! for the thin-client architecture.
 //!
-//! The wallet now uses deterministic address derivation:
+//! The wallet uses deterministic address derivation:
 //! - time-wallet.dat stores ONLY: xpub, encrypted mnemonic, master key
 //! - Addresses are derived on-demand from xpub
-//! - Contact info and metadata stored separately in wallet.db
+//! - All blockchain state is queried from masternodes via JSON-RPC
 
 use crate::wallet_dat::{WalletDat, WalletDatError};
-use serde::{Deserialize, Serialize};
 use std::fs;
 use wallet::{Keypair, NetworkType, Transaction, Wallet, UTXO};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AddressMetadata {
-    pub address: String,
-    pub label: Option<String>,
-    pub name: Option<String>,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub index: u32, // Address derivation index
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TransactionRecord {
-    pub tx_hash: String,
-    pub from_address: Option<String>,
-    pub to_address: String,
-    pub amount: u64,
-    pub timestamp: i64,
-    pub status: String,
-}
 
 #[derive(Debug)]
 pub struct WalletManager {
@@ -314,14 +294,6 @@ impl WalletManager {
         // Transaction will be validated by masternodes
         log::info!("Transaction created, will be validated by masternode network");
         Ok(tx)
-    }
-
-    /// Estimate transaction size in bytes
-    fn estimate_transaction_size(&self, tx: &Transaction) -> usize {
-        let base_size = 10;
-        let input_size = tx.inputs.len() * 180;
-        let output_size = tx.outputs.len() * 34;
-        base_size + input_size + output_size
     }
 }
 

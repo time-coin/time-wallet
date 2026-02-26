@@ -15,9 +15,14 @@ pub struct Config {
     #[serde(default = "default_network")]
     pub network: String,
 
-    /// Masternode endpoint URL
+    /// Masternode JSON-RPC endpoint URL (e.g. "https://testnet-mn1.time-coin.io")
     #[serde(default = "default_masternode_endpoint")]
     pub masternode_endpoint: String,
+
+    /// WebSocket endpoint for real-time notifications.
+    /// Derived from masternode_endpoint if not set.
+    #[serde(default)]
+    pub ws_endpoint: Option<String>,
 
     /// Local data directory (for wallet storage)
     #[serde(skip)]
@@ -38,6 +43,7 @@ impl Default for Config {
         Self {
             network: default_network(),
             masternode_endpoint: default_masternode_endpoint(),
+            ws_endpoint: None,
             data_dir: None,
         }
     }
@@ -57,8 +63,10 @@ impl Config {
             Ok(config)
         } else {
             log::info!("📝 Creating default config");
-            let mut config = Config::default();
-            config.data_dir = Some(Self::data_dir()?);
+            let config = Config {
+                data_dir: Some(Self::data_dir()?),
+                ..Config::default()
+            };
             config.save()?;
             Ok(config)
         }
@@ -128,6 +136,23 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Get the WebSocket URL, deriving from masternode endpoint if not explicitly set.
+    pub fn ws_url(&self) -> String {
+        if let Some(ref ws) = self.ws_endpoint {
+            return ws.clone();
+        }
+        // Derive: http(s)://host:port → ws(s)://host:port/ws
+        self.masternode_endpoint
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1)
+            + "/ws"
+    }
+
+    /// Whether this is the testnet network.
+    pub fn is_testnet(&self) -> bool {
+        self.network == "testnet"
     }
 }
 
@@ -199,5 +224,31 @@ mod tests {
         let toml = toml::to_string(&config).unwrap();
         let deserialized: Config = toml::from_str(&toml).unwrap();
         assert_eq!(config.network, deserialized.network);
+    }
+
+    #[test]
+    fn test_ws_url_derived() {
+        let config = Config {
+            masternode_endpoint: "https://testnet-mn1.time-coin.io".to_string(),
+            ws_endpoint: None,
+            ..Config::default()
+        };
+        assert_eq!(config.ws_url(), "wss://testnet-mn1.time-coin.io/ws");
+
+        let config2 = Config {
+            masternode_endpoint: "http://127.0.0.1:24101".to_string(),
+            ws_endpoint: None,
+            ..Config::default()
+        };
+        assert_eq!(config2.ws_url(), "ws://127.0.0.1:24101/ws");
+    }
+
+    #[test]
+    fn test_ws_url_explicit() {
+        let config = Config {
+            ws_endpoint: Some("ws://custom:9999/ws".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(config.ws_url(), "ws://custom:9999/ws");
     }
 }

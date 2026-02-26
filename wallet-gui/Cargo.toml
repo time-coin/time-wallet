@@ -9,6 +9,7 @@ license = "BUSL-1.1"
 eframe = "0.31"
 egui = "0.31"
 egui_extras = { version = "0.31", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Async runtime
 tokio = { workspace = true }
@@ -21,9 +22,6 @@ bincode = { workspace = true }
 serde_bytes = "0.11"
 
 # Cryptography
-sha2 = { workspace = true }
-hex = { workspace = true }
-ed25519-dalek = { workspace = true }
 rand = { workspace = true }
 # SECURITY FIX: Add AES-256-GCM encryption for wallet
 aes-gcm = "0.10"
@@ -32,8 +30,6 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 # Networking
 reqwest = { workspace = true }
-socket2 = "0.5"
-local-ip-address = { workspace = true }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 
@@ -50,21 +46,15 @@ sled = { workspace = true }
 # Error handling
 thiserror = { workspace = true }
 
+# Config
+toml = { workspace = true }
+
 # File system utilities
 dirs = "6.0"
 
 # Encoding
 base64 = "0.22"
 
-# QR code rendering (SVG to image)
-resvg = "0.44"
-tiny-skia = "0.11"
-
-# PDF generation (for mnemonic backup)
-printpdf = "0.7"
-
 # Local wallet dependency from parent project
 wallet = { path = "../wallet", version = "0.1.0" }
-time-network = { path = "../network", version = "0.1.0" }
-time-core = { path = "../core", version = "0.1.0" }
 

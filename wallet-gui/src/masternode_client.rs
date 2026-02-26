@@ -124,7 +124,7 @@ impl MasternodeClient {
             .get("balance")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
-        let locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let _locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let available_time = result
             .get("available")
             .and_then(|v| v.as_f64())
@@ -134,7 +134,7 @@ impl MasternodeClient {
         let confirmed = (available_time * 100_000_000.0) as u64;
         let pending = 0u64; // Masternode doesn't report pending separately
         let total = (balance_time * 100_000_000.0) as u64;
-        let _locked = (locked_time * 100_000_000.0) as u64;
+        let _locked = (_locked_time * 100_000_000.0) as u64;
 
         let balance = Balance {
             confirmed,
@@ -159,7 +159,7 @@ impl MasternodeClient {
             .get("balance")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
-        let locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let _locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let available_time = result
             .get("available")
             .and_then(|v| v.as_f64())

@@ -137,7 +137,7 @@ pub fn decrypt_with_password(
     let argon2 = Argon2::default();
     let password_hash = argon2
         .hash_password(password.as_str().as_bytes(), &salt)
-        .map_err(|e| EncryptionError::InvalidPassword)?;
+        .map_err(|_| EncryptionError::InvalidPassword)?;
 
     // Extract key from hash
     let hash_output = password_hash
