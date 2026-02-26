@@ -12,7 +12,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
         ui.heading("Transactions");
         ui.add_space(10.0);
 
-        if ui.button("🔄 Sync").clicked() {
+        if ui.button("Sync").clicked() {
             let _ = ui_tx.send(UiEvent::RefreshTransactions);
         }
     });
@@ -45,9 +45,9 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                 ui.horizontal(|ui| {
                     // Status icon
                     let (icon, color) = if tx.confirmations > 0 {
-                        ("✓", egui::Color32::GREEN)
+                        ("OK", egui::Color32::GREEN)
                     } else {
-                        ("⏳", egui::Color32::YELLOW)
+                        ("..", egui::Color32::YELLOW)
                     };
                     ui.label(egui::RichText::new(icon).size(16.0).color(color));
 
@@ -72,7 +72,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
 
                         // Transaction ID
                         let short_txid = if tx.txid.len() > 32 {
-                            format!("{}…", &tx.txid[..32])
+                            format!("{}..", &tx.txid[..32])
                         } else {
                             tx.txid.clone()
                         };

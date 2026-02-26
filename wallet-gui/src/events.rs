@@ -23,6 +23,9 @@ pub enum UiEvent {
         password: Option<String>,
     },
 
+    /// Prepare for new wallet creation — backup existing wallet file if present.
+    PrepareNewWallet,
+
     /// Request a balance refresh from the masternode.
     RefreshBalance,
 
@@ -113,6 +116,11 @@ pub enum ServiceEvent {
 
     /// The wallet is encrypted and a password is needed to unlock it.
     PasswordRequired,
+
+    /// Existing wallet was backed up (or none existed). Ready for mnemonic input.
+    ReadyForMnemonic {
+        backed_up_path: Option<String>,
+    },
 
     /// A new address was generated.
     AddressGenerated(AddressInfo),

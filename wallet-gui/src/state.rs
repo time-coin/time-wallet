@@ -63,6 +63,9 @@ pub struct AppState {
     pub password_required: bool,
     pub password_input: String,
     pub show_password: bool,
+    pub mnemonic_input: String,
+    pub new_wallet_password: String,
+    pub backed_up_path: Option<String>,
     pub error: Option<String>,
     pub success: Option<String>,
     pub loading: bool,
@@ -93,6 +96,9 @@ impl Default for AppState {
             password_required: false,
             password_input: String::new(),
             show_password: false,
+            mnemonic_input: String::new(),
+            new_wallet_password: String::new(),
+            backed_up_path: None,
             error: None,
             success: None,
             loading: false,
@@ -172,6 +178,14 @@ impl AppState {
                 self.password_required = true;
                 self.loading = false;
                 self.error = None;
+            }
+
+            ServiceEvent::ReadyForMnemonic { backed_up_path } => {
+                self.backed_up_path = backed_up_path;
+                self.mnemonic_input.clear();
+                self.new_wallet_password.clear();
+                self.screen = Screen::MnemonicSetup;
+                self.loading = false;
             }
 
             ServiceEvent::PeersDiscovered(peers) => {

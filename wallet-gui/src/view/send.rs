@@ -36,7 +36,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                 ui.colored_label(
                     egui::Color32::RED,
                     format!(
-                        "⚠ This is a {} address. You are on {}.",
+                        "WARNING: This is a {} address. You are on {}.",
                         if state.is_testnet {
                             "mainnet"
                         } else {
@@ -48,7 +48,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             } else if !state.send_address.starts_with(expected_prefix) {
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    format!("⚠ Expected address starting with {}", expected_prefix),
+                    format!(
+                        "WARNING: Expected address starting with {}",
+                        expected_prefix
+                    ),
                 );
             }
         }
@@ -97,7 +100,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         if ui
             .add_enabled(
                 can_send,
-                egui::Button::new(egui::RichText::new("📤 Send Transaction").size(16.0))
+                egui::Button::new(egui::RichText::new("Send Transaction").size(16.0))
                     .min_size(egui::vec2(200.0, 36.0)),
             )
             .clicked()
@@ -130,11 +133,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
     // Status messages
     if let Some(ref err) = state.error {
         ui.add_space(10.0);
-        ui.colored_label(egui::Color32::RED, format!("⚠ {}", err));
+        ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
     }
     if let Some(ref msg) = state.success {
         ui.add_space(10.0);
-        ui.colored_label(egui::Color32::GREEN, format!("✅ {}", msg));
+        ui.colored_label(egui::Color32::GREEN, format!("Sent: {}", msg));
     }
 }
 

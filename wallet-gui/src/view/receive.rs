@@ -14,7 +14,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
     if state.addresses.is_empty() {
         ui.label(
-            egui::RichText::new("No addresses available — load or create a wallet first.")
+            egui::RichText::new("No addresses available -- load or create a wallet first.")
                 .color(egui::Color32::GRAY)
                 .italics(),
         );
@@ -47,7 +47,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             ui.add_space(8.0);
             ui.label(egui::RichText::new(&selected_addr).monospace().size(13.0));
             ui.add_space(8.0);
-            if ui.button("📋 Copy Address").clicked() {
+            if ui.button("Copy Address").clicked() {
                 ui.ctx().copy_text(selected_addr.clone());
             }
         });
@@ -112,7 +112,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         // Truncated address
                         let addr = &state.addresses[i].address;
                         let display = if addr.len() > 24 {
-                            format!("{}…{}", &addr[..14], &addr[addr.len() - 8..])
+                            format!("{}..{}", &addr[..14], &addr[addr.len() - 8..])
                         } else {
                             addr.clone()
                         };
@@ -120,7 +120,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
                         // Copy button
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("📋").clicked() {
+                            if ui.button("Copy").clicked() {
                                 ui.ctx().copy_text(state.addresses[i].address.clone());
                             }
                         });

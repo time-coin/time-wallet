@@ -32,7 +32,7 @@ pub fn show(ui: &mut Ui, state: &AppState) {
         ui.add_space(4.0);
         if state.wallet_loaded {
             ui.label(format!("Addresses: {}", state.addresses.len()));
-            ui.label("Status: Loaded ✅");
+            ui.label("Status: Loaded");
         } else {
             ui.label("Status: Not loaded");
         }
@@ -47,9 +47,9 @@ pub fn show(ui: &mut Ui, state: &AppState) {
         ui.add_space(4.0);
 
         let ws_status = if state.ws_connected {
-            egui::RichText::new("WebSocket: Connected ✅").color(egui::Color32::GREEN)
+            egui::RichText::new("WebSocket: Connected").color(egui::Color32::GREEN)
         } else {
-            egui::RichText::new("WebSocket: Disconnected ❌").color(egui::Color32::RED)
+            egui::RichText::new("WebSocket: Disconnected").color(egui::Color32::RED)
         };
         ui.label(ws_status);
 
@@ -67,9 +67,9 @@ pub fn show(ui: &mut Ui, state: &AppState) {
         ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new("Security").strong());
         ui.add_space(4.0);
-        ui.label("• Private keys are encrypted with AES-256-GCM");
-        ui.label("• Key derivation uses Argon2id (memory-hard)");
-        ui.label("• Keys are zeroized from memory after use");
-        ui.label("• Always keep your recovery phrase in a safe place");
+        ui.label("- Private keys are encrypted with AES-256-GCM");
+        ui.label("- Key derivation uses Argon2id (memory-hard)");
+        ui.label("- Keys are zeroized from memory after use");
+        ui.label("- Always keep your recovery phrase in a safe place");
     });
 }

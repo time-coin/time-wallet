@@ -145,6 +145,32 @@ pub async fn run(
                         state.create_wallet(&mnemonic, password);
                     }
 
+                    UiEvent::PrepareNewWallet => {
+                        let wallet_path = wallet_dat::WalletDat::default_path(state.network_type);
+                        let backed_up = if wallet_path.exists() {
+                            let date = chrono::Local::now().format("%Y-%m-%d_%H%M%S");
+                            let backup_name = format!("time-wallet-{}.dat", date);
+                            let backup_path = wallet_path.with_file_name(&backup_name);
+                            match std::fs::rename(&wallet_path, &backup_path) {
+                                Ok(_) => {
+                                    log::info!("Backed up wallet to {}", backup_path.display());
+                                    Some(backup_path.display().to_string())
+                                }
+                                Err(e) => {
+                                    let _ = state.svc_tx.send(ServiceEvent::Error(
+                                        format!("Failed to backup wallet: {}", e),
+                                    ));
+                                    return;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        let _ = state.svc_tx.send(ServiceEvent::ReadyForMnemonic {
+                            backed_up_path: backed_up,
+                        });
+                    }
+
                     UiEvent::RefreshBalance => {
                         if let Some(ref client) = state.client {
                             if !state.addresses.is_empty() {

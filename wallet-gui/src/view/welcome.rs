@@ -54,7 +54,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
             let unlock_clicked = ui
                 .add(
-                    egui::Button::new(egui::RichText::new("🔓 Unlock").size(16.0))
+                    egui::Button::new(egui::RichText::new("Unlock").size(16.0))
                         .min_size(egui::vec2(200.0, 40.0)),
                 )
                 .clicked();
@@ -73,7 +73,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             // Load existing wallet
             if ui
                 .add(
-                    egui::Button::new(egui::RichText::new("🔓 Open Wallet").size(16.0))
+                    egui::Button::new(egui::RichText::new("Open Wallet").size(16.0))
                         .min_size(egui::vec2(200.0, 40.0)),
                 )
                 .clicked()
@@ -86,12 +86,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             // Create new wallet
             if ui
                 .add(
-                    egui::Button::new(egui::RichText::new("✨ Create New Wallet").size(16.0))
+                    egui::Button::new(egui::RichText::new("Create New Wallet").size(16.0))
                         .min_size(egui::vec2(200.0, 40.0)),
                 )
                 .clicked()
             {
-                let _ = ui_tx.send(UiEvent::NavigatedTo(crate::events::Screen::MnemonicSetup));
+                let _ = ui_tx.send(UiEvent::PrepareNewWallet);
             }
         }
 
@@ -99,7 +99,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         // Error display
         if let Some(ref err) = state.error {
-            ui.colored_label(egui::Color32::RED, format!("⚠ {}", err));
+            ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
         }
 
         if state.loading {

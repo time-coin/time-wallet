@@ -16,9 +16,9 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
             .add_enabled(
                 !state.loading,
                 egui::Button::new(if state.loading {
-                    "⏳ Refreshing..."
+                    "Refreshing..."
                 } else {
-                    "🔄 Refresh"
+                    "Refresh"
                 }),
             )
             .clicked()
@@ -29,9 +29,9 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let ws_label = if state.ws_connected {
-                egui::RichText::new("● Connected").color(egui::Color32::GREEN)
+                egui::RichText::new("Connected").color(egui::Color32::GREEN)
             } else {
-                egui::RichText::new("● Disconnected").color(egui::Color32::RED)
+                egui::RichText::new("Disconnected").color(egui::Color32::RED)
             };
             ui.label(ws_label);
         });
@@ -96,7 +96,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                         ui.horizontal(|ui| {
                             let amount_time = tx.amount as f64 / 1_000_000.0;
                             let short_txid = if tx.txid.len() > 16 {
-                                format!("{}…", &tx.txid[..16])
+                                format!("{}..", &tx.txid[..16])
                             } else {
                                 tx.txid.clone()
                             };
@@ -132,10 +132,10 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
     // Status messages
     if let Some(ref err) = state.error {
         ui.add_space(10.0);
-        ui.colored_label(egui::Color32::RED, format!("⚠ {}", err));
+        ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
     }
     if let Some(ref msg) = state.success {
         ui.add_space(10.0);
-        ui.colored_label(egui::Color32::GREEN, format!("✅ {}", msg));
+        ui.colored_label(egui::Color32::GREEN, msg.as_str());
     }
 }
