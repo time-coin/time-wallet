@@ -384,8 +384,8 @@ impl ServiceState {
 
     fn finish_wallet_init(&mut self, result: Result<WalletManager, wallet_dat::WalletDatError>) {
         match result {
-            Ok(wm) => {
-                self.addresses = derive_addresses(&wm);
+            Ok(mut wm) => {
+                self.addresses = derive_addresses(&mut wm);
                 let is_testnet = self.network_type == NetworkType::Testnet;
                 let _ = self.svc_tx.send(ServiceEvent::WalletLoaded {
                     addresses: self.addresses.clone(),
@@ -419,7 +419,12 @@ impl ServiceState {
 }
 
 /// Derive all known addresses from the wallet manager.
-fn derive_addresses(wm: &WalletManager) -> Vec<String> {
+/// Ensures at least one address exists.
+fn derive_addresses(wm: &mut WalletManager) -> Vec<String> {
+    // Ensure at least one address is derived
+    if wm.get_address_count() == 0 {
+        let _ = wm.get_next_address();
+    }
     (0..wm.get_address_count())
         .filter_map(|i| wm.derive_address(i).ok())
         .collect()
