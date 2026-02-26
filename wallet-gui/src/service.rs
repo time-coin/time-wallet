@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config_new::Config;
 use crate::events::{Screen, ServiceEvent, UiEvent};
 use crate::masternode_client::MasternodeClient;
+use crate::peer_discovery;
 use crate::wallet_dat;
 use crate::wallet_manager::WalletManager;
 use crate::ws_client::{WsClient, WsEvent};
@@ -23,9 +24,31 @@ pub async fn run(
     token: CancellationToken,
     mut ui_rx: mpsc::UnboundedReceiver<UiEvent>,
     svc_tx: mpsc::UnboundedSender<ServiceEvent>,
-    config: Config,
+    mut config: Config,
 ) {
-    let client = MasternodeClient::new(config.masternode_endpoint.clone());
+    // Discover peers: manual first, then API
+    let mut endpoints = config.manual_endpoints();
+    match peer_discovery::fetch_peers(config.is_testnet()).await {
+        Ok(api_peers) => {
+            log::info!("🌐 API returned {} peers", api_peers.len());
+            endpoints.extend(api_peers);
+        }
+        Err(e) => {
+            log::warn!("⚠ Peer discovery failed: {}", e);
+        }
+    }
+
+    if endpoints.is_empty() {
+        let _ = svc_tx.send(ServiceEvent::Error(
+            "No peers available. Add peers to config.toml or check your internet connection.".to_string(),
+        ));
+        return;
+    }
+
+    let active_endpoint = peer_discovery::select_best_peer(&endpoints).await;
+    log::info!("🔗 Using peer: {}", active_endpoint);
+    let client = MasternodeClient::new(active_endpoint.clone());
+    config.active_endpoint = Some(active_endpoint);
 
     let (ws_event_tx, mut ws_event_rx) = mpsc::unbounded_channel::<WsEvent>();
     let (ws_shutdown_tx, ws_shutdown_rx) = tokio::sync::watch::channel(false);

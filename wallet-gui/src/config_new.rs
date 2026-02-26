@@ -15,36 +15,37 @@ pub struct Config {
     #[serde(default = "default_network")]
     pub network: String,
 
-    /// Masternode JSON-RPC endpoint URL (e.g. "https://testnet-mn1.time-coin.io")
-    #[serde(default = "default_masternode_endpoint")]
-    pub masternode_endpoint: String,
+    /// Manually configured peer endpoints (e.g. ["64.91.241.10:24001"]).
+    /// These are tried first, before peers discovered from the API.
+    #[serde(default)]
+    pub peers: Vec<String>,
 
     /// WebSocket endpoint for real-time notifications.
-    /// Derived from masternode_endpoint if not set.
+    /// Derived from the active peer if not set.
     #[serde(default)]
     pub ws_endpoint: Option<String>,
 
     /// Local data directory (for wallet storage)
     #[serde(skip)]
     pub data_dir: Option<PathBuf>,
+
+    /// The currently active masternode endpoint (set at runtime, not serialized).
+    #[serde(skip)]
+    pub active_endpoint: Option<String>,
 }
 
 fn default_network() -> String {
-    "testnet".to_string()
-}
-
-fn default_masternode_endpoint() -> String {
-    // Default to testnet masternode
-    "https://testnet-mn1.time-coin.io".to_string()
+    "mainnet".to_string()
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             network: default_network(),
-            masternode_endpoint: default_masternode_endpoint(),
+            peers: Vec::new(),
             ws_endpoint: None,
             data_dir: None,
+            active_endpoint: None,
         }
     }
 }
@@ -59,7 +60,7 @@ impl Config {
             let contents = fs::read_to_string(&config_path)?;
             let mut config: Config = toml::from_str(&contents)?;
             config.data_dir = Some(Self::data_dir()?);
-            log::info!("✅ Config loaded: network={}, endpoint={}", config.network, config.masternode_endpoint);
+            log::info!("✅ Config loaded: network={}, {} manual peers", config.network, config.peers.len());
             Ok(config)
         } else {
             log::info!("📝 Creating default config");
@@ -113,41 +114,66 @@ impl Config {
     /// Switch to mainnet
     pub fn use_mainnet(&mut self) {
         self.network = "mainnet".to_string();
-        self.masternode_endpoint = "https://mainnet-mn1.time-coin.io".to_string();
     }
 
     /// Switch to testnet
     pub fn use_testnet(&mut self) {
         self.network = "testnet".to_string();
-        self.masternode_endpoint = "https://testnet-mn1.time-coin.io".to_string();
     }
 
     /// Validate configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Check network is valid
         if self.network != "mainnet" && self.network != "testnet" {
             return Err(ConfigError::InvalidNetwork(self.network.clone()));
         }
 
-        // Check endpoint is valid URL
-        if !self.masternode_endpoint.starts_with("http://") 
-            && !self.masternode_endpoint.starts_with("https://") {
-            return Err(ConfigError::InvalidEndpoint(self.masternode_endpoint.clone()));
+        // Validate manually configured peer addresses
+        for peer in &self.peers {
+            if peer.is_empty() {
+                return Err(ConfigError::InvalidPeer("empty peer address".to_string()));
+            }
         }
 
         Ok(())
     }
 
-    /// Get the WebSocket URL, deriving from masternode endpoint if not explicitly set.
+    /// Get the WebSocket URL, deriving from the active endpoint if not explicitly set.
     pub fn ws_url(&self) -> String {
         if let Some(ref ws) = self.ws_endpoint {
             return ws.clone();
         }
-        // Derive: http(s)://host:port → ws(s)://host:port/ws
-        self.masternode_endpoint
-            .replacen("https://", "wss://", 1)
-            .replacen("http://", "ws://", 1)
-            + "/ws"
+        if let Some(ref endpoint) = self.active_endpoint {
+            // Derive: http(s)://host:port → ws(s)://host:port/ws
+            return endpoint
+                .replacen("https://", "wss://", 1)
+                .replacen("http://", "ws://", 1)
+                + "/ws";
+        }
+        // No endpoint yet — return a placeholder that will fail gracefully
+        "ws://127.0.0.1:0/ws".to_string()
+    }
+
+    /// Get the RPC port for the current network.
+    pub fn rpc_port(&self) -> u16 {
+        if self.is_testnet() { 24101 } else { 24001 }
+    }
+
+    /// Build HTTP endpoint URLs from the manual peer list.
+    /// Each entry can be `ip`, `ip:port`, or a full `http://...` URL.
+    pub fn manual_endpoints(&self) -> Vec<String> {
+        let port = self.rpc_port();
+        self.peers
+            .iter()
+            .map(|p| {
+                if p.starts_with("http://") || p.starts_with("https://") {
+                    p.clone()
+                } else if p.contains(':') {
+                    format!("http://{}", p)
+                } else {
+                    format!("http://{}:{}", p, port)
+                }
+            })
+            .collect()
     }
 
     /// Whether this is the testnet network.
@@ -179,6 +205,9 @@ pub enum ConfigError {
 
     #[error("Invalid endpoint: {0} (must start with http:// or https://)")]
     InvalidEndpoint(String),
+
+    #[error("Invalid peer: {0}")]
+    InvalidPeer(String),
 }
 
 #[cfg(test)]
@@ -188,8 +217,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.network, "testnet");
-        assert!(config.masternode_endpoint.starts_with("https://"));
+        assert_eq!(config.network, "mainnet");
+        assert!(config.peers.is_empty());
     }
 
     #[test]
@@ -198,11 +227,9 @@ mod tests {
         
         config.use_mainnet();
         assert_eq!(config.network, "mainnet");
-        assert!(config.masternode_endpoint.contains("mainnet"));
 
         config.use_testnet();
         assert_eq!(config.network, "testnet");
-        assert!(config.masternode_endpoint.contains("testnet"));
     }
 
     #[test]
@@ -213,8 +240,8 @@ mod tests {
         config.network = "invalid".to_string();
         assert!(config.validate().is_err());
 
-        config.network = "testnet".to_string();
-        config.masternode_endpoint = "not-a-url".to_string();
+        config.network = "mainnet".to_string();
+        config.peers = vec!["".to_string()];
         assert!(config.validate().is_err());
     }
 
@@ -228,18 +255,14 @@ mod tests {
 
     #[test]
     fn test_ws_url_derived() {
-        let config = Config {
-            masternode_endpoint: "https://testnet-mn1.time-coin.io".to_string(),
-            ws_endpoint: None,
-            ..Config::default()
-        };
-        assert_eq!(config.ws_url(), "wss://testnet-mn1.time-coin.io/ws");
+        let mut config = Config::default();
+        config.active_endpoint = Some("https://example.com".to_string());
+        config.ws_endpoint = None;
+        assert_eq!(config.ws_url(), "wss://example.com/ws");
 
-        let config2 = Config {
-            masternode_endpoint: "http://127.0.0.1:24101".to_string(),
-            ws_endpoint: None,
-            ..Config::default()
-        };
+        let mut config2 = Config::default();
+        config2.active_endpoint = Some("http://127.0.0.1:24101".to_string());
+        config2.ws_endpoint = None;
         assert_eq!(config2.ws_url(), "ws://127.0.0.1:24101/ws");
     }
 
@@ -250,5 +273,30 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(config.ws_url(), "ws://custom:9999/ws");
+    }
+
+    #[test]
+    fn test_manual_endpoints() {
+        let config = Config {
+            peers: vec![
+                "64.91.241.10".to_string(),
+                "50.28.104.50:24001".to_string(),
+                "http://custom.host:24001".to_string(),
+            ],
+            ..Config::default()
+        };
+        let endpoints = config.manual_endpoints();
+        assert_eq!(endpoints[0], "http://64.91.241.10:24001");
+        assert_eq!(endpoints[1], "http://50.28.104.50:24001");
+        assert_eq!(endpoints[2], "http://custom.host:24001");
+    }
+
+    #[test]
+    fn test_manual_endpoints_testnet() {
+        let mut config = Config::default();
+        config.use_testnet();
+        config.peers = vec!["64.91.241.10".to_string()];
+        let endpoints = config.manual_endpoints();
+        assert_eq!(endpoints[0], "http://64.91.241.10:24101");
     }
 }
