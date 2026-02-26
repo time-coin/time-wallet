@@ -20,6 +20,8 @@ use crate::wallet_manager::WalletManager;
 use crate::ws_client::{WsClient, WsEvent};
 use wallet::NetworkType;
 
+type DiscoveryHandle = tokio::task::JoinHandle<Result<(String, Vec<PeerInfo>), ()>>;
+
 /// Run the service loop until the cancellation token fires.
 ///
 /// This is the **only** `tokio::spawn`ed task in the application. It owns the
@@ -63,12 +65,19 @@ pub async fn run(
     };
 
     // Kick off peer discovery in the background
-    let discovery_svc_tx = state.svc_tx.clone();
     let is_testnet = config.is_testnet();
     let manual_endpoints = config.manual_endpoints();
-    let mut discovery_handle = Some(tokio::spawn(async move {
-        discover_peers(is_testnet, manual_endpoints, &discovery_svc_tx).await
+    let discovery_svc_tx = state.svc_tx.clone();
+    let discovery_endpoints = manual_endpoints.clone();
+    let mut discovery_handle: Option<DiscoveryHandle> = Some(tokio::spawn(async move {
+        discover_peers(is_testnet, discovery_endpoints, &discovery_svc_tx).await
     }));
+
+    // Periodic refresh every 5 seconds
+    let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Skip the first immediate tick — the initial discovery is already in flight
+    refresh_interval.tick().await;
 
     log::info!("🚀 Service loop started ({})", state.config.network);
 
@@ -78,6 +87,15 @@ pub async fn run(
                 log::info!("🛑 Service loop shutting down");
                 let _ = ws_shutdown_tx.send(true);
                 break;
+            }
+
+            // Periodic peer refresh
+            _ = refresh_interval.tick(), if discovery_handle.is_none() => {
+                let tx = state.svc_tx.clone();
+                let eps = manual_endpoints.clone();
+                discovery_handle = Some(tokio::spawn(async move {
+                    discover_peers(is_testnet, eps, &tx).await
+                }));
             }
 
             // Peer discovery completes in the background
@@ -91,17 +109,21 @@ pub async fn run(
                 discovery_handle = None;
                 if let Ok(Ok((endpoint, peer_infos))) = result {
                     let _ = state.svc_tx.send(ServiceEvent::PeersDiscovered(peer_infos));
-                    log::info!("🔗 Using peer: {}", endpoint);
-                    state.client = Some(MasternodeClient::new(endpoint.clone()));
-                    state.config.active_endpoint = Some(endpoint.clone());
-                    config.active_endpoint = Some(endpoint);
 
-                    // If wallet is already loaded, start WS and fetch data
-                    if !state.addresses.is_empty() {
-                        state.start_ws();
-                        if let Some(ref client) = state.client {
-                            if let Ok(bal) = client.get_balances(&state.addresses).await {
-                                let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                    // Only switch active peer if we don't have one yet
+                    if state.client.is_none() {
+                        log::info!("🔗 Using peer: {}", endpoint);
+                        state.client = Some(MasternodeClient::new(endpoint.clone()));
+                        state.config.active_endpoint = Some(endpoint.clone());
+                        config.active_endpoint = Some(endpoint);
+
+                        // If wallet is already loaded, start WS and fetch data
+                        if !state.addresses.is_empty() {
+                            state.start_ws();
+                            if let Some(ref client) = state.client {
+                                if let Ok(bal) = client.get_balances(&state.addresses).await {
+                                    let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                                }
                             }
                         }
                     }
