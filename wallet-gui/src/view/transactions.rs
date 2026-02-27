@@ -92,16 +92,22 @@ fn show_detail(ui: &mut Ui, state: &mut AppState, idx: usize) {
             // Address
             let addr_label = if tx.is_send { "To:" } else { "From:" };
             ui.label(egui::RichText::new(addr_label).strong());
-            if ui
-                .add(
-                    egui::Label::new(egui::RichText::new(&tx.address).monospace())
-                        .sense(egui::Sense::click()),
-                )
-                .on_hover_text("Click to copy")
-                .clicked()
-            {
-                ui.ctx().copy_text(tx.address.clone());
-            }
+            ui.vertical(|ui| {
+                // Show contact name if known
+                if let Some(name) = state.contact_name(&tx.address) {
+                    ui.label(egui::RichText::new(name).strong());
+                }
+                if ui
+                    .add(
+                        egui::Label::new(egui::RichText::new(&tx.address).monospace())
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Click to copy")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(tx.address.clone());
+                }
+            });
             ui.end_row();
 
             // Fee
@@ -188,9 +194,17 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
 
                             ui.add_space(8.0);
 
-                            // Abbreviated address
+                            // Recipient: contact name or abbreviated address
                             let addr_label = if tx.is_fee {
                                 tx.address.clone()
+                            } else if let Some(name) = state.contact_name(&tx.address) {
+                                let addr = &tx.address;
+                                let short = if addr.len() > 14 {
+                                    format!("{}..{}", &addr[..8], &addr[addr.len() - 4..])
+                                } else {
+                                    addr.clone()
+                                };
+                                format!("{} ({})", name, short)
                             } else {
                                 let addr = &tx.address;
                                 if addr.len() > 14 {

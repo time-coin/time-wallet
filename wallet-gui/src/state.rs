@@ -130,6 +130,14 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Look up a contact name for an address. Returns None if not found.
+    pub fn contact_name(&self, address: &str) -> Option<&str> {
+        self.contacts
+            .iter()
+            .find(|c| c.address == address)
+            .map(|c| c.name.as_str())
+    }
+
     /// Apply a service event to update state. Pure state-machine transition.
     pub fn apply(&mut self, event: ServiceEvent) {
         // Clear transient messages on any successful response
