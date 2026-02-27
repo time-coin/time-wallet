@@ -100,7 +100,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         // Available balance and insufficient funds check
         let available = state.balance.confirmed;
-        let available_time = available as f64 / 100_000_000.0;
         let send_amount = parse_time_amount(&state.send_amount);
         let send_fee = if state.send_fee.is_empty() {
             100_000 // default fee: 0.001 TIME
@@ -112,21 +111,29 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         if insufficient {
             ui.label(
-                egui::RichText::new(format!("Available: {:.6} TIME", available_time))
-                    .color(egui::Color32::RED),
+                egui::RichText::new(format!(
+                    "Available: {}.{:06} TIME",
+                    available / 100_000_000,
+                    (available % 100_000_000) / 100
+                ))
+                .color(egui::Color32::RED),
             );
-            let total_time = total_cost as f64 / 100_000_000.0;
             ui.colored_label(
                 egui::Color32::RED,
                 format!(
-                    "Insufficient funds. Amount + fee = {:.6} TIME exceeds balance.",
-                    total_time
+                    "Insufficient funds. Amount + fee = {}.{:06} TIME exceeds balance.",
+                    total_cost / 100_000_000,
+                    (total_cost % 100_000_000) / 100
                 ),
             );
         } else {
             ui.label(
-                egui::RichText::new(format!("Available: {:.6} TIME", available_time))
-                    .color(egui::Color32::GRAY),
+                egui::RichText::new(format!(
+                    "Available: {}.{:06} TIME",
+                    available / 100_000_000,
+                    (available % 100_000_000) / 100
+                ))
+                .color(egui::Color32::GRAY),
             );
         }
 
