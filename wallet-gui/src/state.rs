@@ -402,7 +402,7 @@ mod tests {
             state.apply(ServiceEvent::TransactionReceived(TxNotification {
                 txid: format!("tx{}", i),
                 address: "addr".to_string(),
-                amount: 1.0,
+                amount: serde_json::json!(1.0),
                 output_index: 0,
                 timestamp: 0,
                 confirmations: 0,

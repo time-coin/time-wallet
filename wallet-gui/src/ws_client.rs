@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::Message;
 pub struct TxNotification {
     pub txid: String,
     pub address: String,
-    pub amount: f64, // in TIME
+    pub amount: serde_json::Value,
     pub output_index: u32,
     pub timestamp: i64,
     pub confirmations: u32,
@@ -28,7 +28,7 @@ pub struct UtxoFinalizedNotification {
     #[serde(default)]
     pub address: String,
     #[serde(default)]
-    pub amount: f64,
+    pub amount: serde_json::Value,
 }
 
 /// Server message envelope

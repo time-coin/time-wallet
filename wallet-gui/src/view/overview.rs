@@ -83,9 +83,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         ui.add_space(5.0);
         for notif in state.recent_notifications.iter().rev().take(5) {
             ui.horizontal(|ui| {
+                let amount_sats = crate::masternode_client::json_to_satoshis(&notif.amount);
+                let amount_time = amount_sats as f64 / 100_000_000.0;
                 ui.colored_label(
                     egui::Color32::GREEN,
-                    format!("Received {:.6} TIME", notif.amount),
+                    format!("Received {:.6} TIME", amount_time),
                 );
                 let short_addr = if notif.address.len() > 20 {
                     format!("{}..", &notif.address[..20])

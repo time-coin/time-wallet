@@ -11,6 +11,69 @@ use std::time::Duration;
 
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Parse a JSON numeric value to satoshis (1 TIME = 100_000_000 satoshis)
+/// without floating-point multiplication. Extracts the raw JSON text and
+/// does integer arithmetic on the decimal string.
+pub fn json_to_satoshis(val: &serde_json::Value) -> u64 {
+    // Get the raw number as a string representation
+    let s = match val {
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        _ => return 0,
+    };
+
+    let s = s.trim();
+    let negative = s.starts_with('-');
+    let s = s.trim_start_matches('-');
+
+    let (whole, frac) = if let Some(dot) = s.find('.') {
+        (&s[..dot], &s[dot + 1..])
+    } else {
+        (s, "")
+    };
+
+    let whole_val: u64 = whole.parse().unwrap_or(0);
+    // Pad or truncate fractional part to exactly 8 digits
+    let frac_padded = format!("{:0<8}", frac);
+    let frac_val: u64 = frac_padded[..8].parse().unwrap_or(0);
+
+    let result = whole_val
+        .saturating_mul(100_000_000)
+        .saturating_add(frac_val);
+
+    if negative {
+        0
+    } else {
+        result
+    }
+}
+
+/// Like `json_to_satoshis` but returns the absolute value (for amounts/fees
+/// that may be negative in the RPC response).
+fn json_to_satoshis_abs(val: &serde_json::Value) -> u64 {
+    let s = match val {
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        _ => return 0,
+    };
+
+    let s = s.trim().trim_start_matches('-');
+
+    let (whole, frac) = if let Some(dot) = s.find('.') {
+        (&s[..dot], &s[dot + 1..])
+    } else {
+        (s, "")
+    };
+
+    let whole_val: u64 = whole.parse().unwrap_or(0);
+    let frac_padded = format!("{:0<8}", frac);
+    let frac_val: u64 = frac_padded[..8].parse().unwrap_or(0);
+
+    whole_val
+        .saturating_mul(100_000_000)
+        .saturating_add(frac_val)
+}
+
 #[derive(Debug, Clone)]
 pub struct MasternodeClient {
     rpc_endpoint: String,
@@ -119,33 +182,16 @@ impl MasternodeClient {
             .rpc_call("getbalance", serde_json::json!([address]))
             .await?;
 
-        // Masternode returns {balance, locked, available} in TIME (f64)
-        let balance_time = result
-            .get("balance")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let _locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let available_time = result
-            .get("available")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        // Convert TIME to satoshis (1 TIME = 100_000_000 satoshis)
-        let confirmed = (available_time * 100_000_000.0).round() as u64;
-        let pending = 0u64; // Masternode doesn't report pending separately
-        let total = (balance_time * 100_000_000.0).round() as u64;
-        let _locked = (_locked_time * 100_000_000.0).round() as u64;
+        // Masternode returns {balance, locked, available} in TIME
+        let confirmed = result.get("available").map(json_to_satoshis).unwrap_or(0);
+        let total = result.get("balance").map(json_to_satoshis).unwrap_or(0);
 
         let balance = Balance {
             confirmed,
-            pending,
+            pending: 0,
             total,
         };
-        log::info!(
-            "✅ Balance: {} TIME (available: {} TIME)",
-            balance_time,
-            available_time
-        );
+        log::info!("✅ Balance: {} sats (available: {} sats)", total, confirmed);
         Ok(balance)
     }
 
@@ -155,18 +201,8 @@ impl MasternodeClient {
             .rpc_call("getbalances", serde_json::json!([addresses]))
             .await?;
 
-        let balance_time = result
-            .get("balance")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let _locked_time = result.get("locked").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let available_time = result
-            .get("available")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        let confirmed = (available_time * 100_000_000.0).round() as u64;
-        let total = (balance_time * 100_000_000.0).round() as u64;
+        let confirmed = result.get("available").map(json_to_satoshis).unwrap_or(0);
+        let total = result.get("balance").map(json_to_satoshis).unwrap_or(0);
 
         let balance = Balance {
             confirmed,
@@ -179,10 +215,10 @@ impl MasternodeClient {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         log::info!(
-            "✅ Batch balance ({} addresses): {} TIME (available: {} TIME)",
+            "✅ Batch balance ({} addresses): {} sats (available: {} sats)",
             addr_count,
-            balance_time,
-            available_time
+            total,
+            confirmed
         );
         Ok(balance)
     }
@@ -227,10 +263,8 @@ impl MasternodeClient {
             .filter_map(|tx| {
                 let txid = tx.get("txid")?.as_str()?.to_string();
                 let category = tx.get("category")?.as_str().unwrap_or("unknown");
-                let amount_time = tx.get("amount")?.as_f64().unwrap_or(0.0);
-                let amount = (amount_time.abs() * 100_000_000.0).round() as u64;
-                let fee_time = tx.get("fee").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let fee = (fee_time.abs() * 100_000_000.0).round() as u64;
+                let amount = tx.get("amount").map(json_to_satoshis_abs).unwrap_or(0);
+                let fee = tx.get("fee").map(json_to_satoshis_abs).unwrap_or(0);
                 let in_block = tx.get("blockhash").and_then(|v| v.as_str()).is_some();
                 let timestamp = tx.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
 
@@ -288,8 +322,7 @@ impl MasternodeClient {
             .filter_map(|u| {
                 let txid = u.get("txid")?.as_str()?.to_string();
                 let vout = u.get("vout")?.as_u64()? as u32;
-                let amount_time = u.get("amount")?.as_f64().unwrap_or(0.0);
-                let amount = (amount_time * 100_000_000.0).round() as u64;
+                let amount = u.get("amount").map(json_to_satoshis).unwrap_or(0);
                 let addr = u
                     .get("address")
                     .and_then(|v| v.as_str())

@@ -347,9 +347,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
     }
 }
 
-/// Parse a human-readable TIME amount (e.g. "1.5") into micro-TIME units.
+/// Parse a human-readable TIME amount (e.g. "1.5") into satoshi units.
 fn parse_time_amount(s: &str) -> u64 {
-    s.parse::<f64>()
-        .map(|v| (v * 100_000_000.0).round() as u64)
-        .unwrap_or(0)
+    let s = s.trim();
+    if s.is_empty() {
+        return 0;
+    }
+    let (whole, frac) = if let Some(dot) = s.find('.') {
+        (&s[..dot], &s[dot + 1..])
+    } else {
+        (s, "")
+    };
+    let whole_val: u64 = whole.parse().unwrap_or(0);
+    let frac_padded = format!("{:0<8}", frac);
+    let frac_val: u64 = frac_padded[..8].parse().unwrap_or(0);
+    whole_val
+        .saturating_mul(100_000_000)
+        .saturating_add(frac_val)
 }

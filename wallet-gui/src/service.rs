@@ -466,7 +466,7 @@ pub async fn run(
                             vout: 0,
                             is_send: false,
                             address: notification.address.clone(),
-                            amount: (notification.amount * 100_000_000.0).round() as u64,
+                            amount: crate::masternode_client::json_to_satoshis(&notification.amount),
                             fee: 0,
                             timestamp: notification.timestamp,
                             status: TransactionStatus::Pending,
@@ -485,7 +485,8 @@ pub async fn run(
                     }
                     WsEvent::UtxoFinalized(notif) => {
                         // UTXO finalized by masternode consensus — mark tx as Approved
-                        log::info!("✅ UTXO finalized: txid={}... vout={} amount={}", &notif.txid[..16.min(notif.txid.len())], notif.output_index, notif.amount);
+                        let amount_sats = crate::masternode_client::json_to_satoshis(&notif.amount);
+                        log::info!("✅ UTXO finalized: txid={}... vout={} amount={}", &notif.txid[..16.min(notif.txid.len())], notif.output_index, amount_sats);
 
                         // Insert transaction record if it doesn't exist yet
                         // (finality event may arrive before the RPC poll adds it)
@@ -494,7 +495,7 @@ pub async fn run(
                             vout: notif.output_index,
                             is_send: false,
                             address: notif.address.clone(),
-                            amount: (notif.amount * 100_000_000.0).round() as u64,
+                            amount: amount_sats,
                             fee: 0,
                             timestamp: chrono::Utc::now().timestamp(),
                             status: TransactionStatus::Approved,
