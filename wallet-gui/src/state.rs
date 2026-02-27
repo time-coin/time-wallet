@@ -84,6 +84,9 @@ pub struct AppState {
     pub error: Option<String>,
     pub success: Option<String>,
     pub loading: bool,
+
+    // -- Display preferences --
+    pub decimal_places: usize,
 }
 
 impl Default for AppState {
@@ -125,11 +128,25 @@ impl Default for AppState {
             error: None,
             success: None,
             loading: false,
+            decimal_places: 2,
         }
     }
 }
 
 impl AppState {
+    /// Format a satoshi amount as TIME with the user's preferred decimal places.
+    pub fn format_time(&self, sats: u64) -> String {
+        let time = sats as f64 / 100_000_000.0;
+        format!("{:.prec$} TIME", time, prec = self.decimal_places)
+    }
+
+    /// Format a satoshi amount with sign prefix (+ or -).
+    pub fn format_time_signed(&self, sats: u64, is_negative: bool) -> String {
+        let time = sats as f64 / 100_000_000.0;
+        let sign = if is_negative { "-" } else { "+" };
+        format!("{}{:.prec$} TIME", sign, time, prec = self.decimal_places)
+    }
+
     /// Look up a display name for an address. Checks own wallet address labels
     /// first, then contacts. Returns None if not found.
     pub fn contact_name(&self, address: &str) -> Option<&str> {
@@ -313,6 +330,10 @@ impl AppState {
             ServiceEvent::Error(msg) => {
                 self.error = Some(msg);
                 self.loading = false;
+            }
+
+            ServiceEvent::DecimalPlacesLoaded(dp) => {
+                self.decimal_places = dp;
             }
         }
     }

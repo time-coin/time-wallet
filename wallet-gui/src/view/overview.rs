@@ -52,22 +52,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             );
             ui.add_space(4.0);
 
-            let total_time = state.balance.total as f64 / 100_000_000.0;
             ui.label(
-                egui::RichText::new(format!("{:.6} TIME", total_time))
+                egui::RichText::new(state.format_time(state.balance.total))
                     .size(32.0)
                     .strong(),
             );
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let confirmed = state.balance.confirmed as f64 / 100_000_000.0;
-                let pending = state.balance.pending as f64 / 100_000_000.0;
-                ui.label(format!("Confirmed: {:.6}", confirmed));
+                let confirmed = state.format_time(state.balance.confirmed);
+                let pending_str = state.format_time(state.balance.pending);
+                ui.label(format!("Confirmed: {}", confirmed));
                 ui.add_space(20.0);
                 if state.balance.pending > 0 {
                     ui.label(
-                        egui::RichText::new(format!("Pending: {:.6}", pending))
+                        egui::RichText::new(format!("Pending: {}", pending_str))
                             .color(egui::Color32::from_rgb(255, 165, 0)),
                     );
                 }
@@ -84,10 +83,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         for notif in state.recent_notifications.iter().rev().take(5) {
             ui.horizontal(|ui| {
                 let amount_sats = crate::masternode_client::json_to_satoshis(&notif.amount);
-                let amount_time = amount_sats as f64 / 100_000_000.0;
                 ui.colored_label(
                     egui::Color32::GREEN,
-                    format!("Received {:.6} TIME", amount_time),
+                    format!("Received {}", state.format_time(amount_sats)),
                 );
                 let short_addr = if notif.address.len() > 20 {
                     format!("{}..", &notif.address[..20])
@@ -134,10 +132,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         ui.add_space(8.0);
 
                         // Amount colored by direction
-                        let amount = tx.amount as f64 / 100_000_000.0;
-                        let sign = if tx.is_send || tx.is_fee { "-" } else { "+" };
+                        let is_neg = tx.is_send || tx.is_fee;
                         ui.label(
-                            egui::RichText::new(format!("{}{:.6} TIME", sign, amount))
+                            egui::RichText::new(state.format_time_signed(tx.amount, is_neg))
                                 .strong()
                                 .color(amount_color),
                         );

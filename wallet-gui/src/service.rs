@@ -51,6 +51,15 @@ pub async fn run(
         log::info!("📂 Wallet database opened at: {}", db_path.display());
     }
 
+    // Load persisted display preferences
+    if let Some(ref db) = wallet_db {
+        if let Ok(Some(dp_str)) = db.get_setting("decimal_places") {
+            if let Ok(dp) = dp_str.parse::<usize>() {
+                let _ = svc_tx.send(ServiceEvent::DecimalPlacesLoaded(dp));
+            }
+        }
+    }
+
     let mut state = ServiceState {
         svc_tx,
         client: None,
@@ -558,6 +567,15 @@ pub async fn run(
                                 let _ = state.svc_tx.send(ServiceEvent::ContactsUpdated(infos));
                             }
                         }
+                    }
+
+                    UiEvent::UpdateDecimalPlaces(dp) => {
+                        if let Some(ref db) = state.wallet_db {
+                            if let Err(e) = db.save_setting("decimal_places", &dp.to_string()) {
+                                log::warn!("Failed to save decimal_places: {}", e);
+                            }
+                        }
+                        let _ = state.svc_tx.send(ServiceEvent::DecimalPlacesLoaded(dp));
                     }
                 }
             }

@@ -59,6 +59,9 @@ pub enum UiEvent {
     /// Delete an external contact.
     DeleteContact { address: String },
 
+    /// Update the number of decimal places for amount display.
+    UpdateDecimalPlaces(usize),
+
     /// Clean shutdown.
     Shutdown,
 }
@@ -148,4 +151,7 @@ pub enum ServiceEvent {
 
     /// Non-fatal error to display in the UI.
     Error(String),
+
+    /// Decimal places preference loaded from database.
+    DecimalPlacesLoaded(usize),
 }

@@ -45,13 +45,16 @@ fn show_detail(ui: &mut Ui, state: &mut AppState, idx: usize) {
         ("Received", egui::Color32::from_rgb(80, 200, 80))
     };
 
-    let amount = tx.amount as f64 / 100_000_000.0;
-    let sign = if tx.is_send || tx.is_fee { "-" } else { "+" };
+    let is_neg = tx.is_send || tx.is_fee;
     ui.label(
-        egui::RichText::new(format!("{} {}{:.6} TIME", dir_label, sign, amount))
-            .size(24.0)
-            .strong()
-            .color(amount_color),
+        egui::RichText::new(format!(
+            "{} {}",
+            dir_label,
+            state.format_time_signed(tx.amount, is_neg)
+        ))
+        .size(24.0)
+        .strong()
+        .color(amount_color),
     );
 
     ui.add_space(15.0);
@@ -113,8 +116,7 @@ fn show_detail(ui: &mut Ui, state: &mut AppState, idx: usize) {
             // Fee
             if tx.fee > 0 {
                 ui.label(egui::RichText::new("Fee:").strong());
-                let fee = tx.fee as f64 / 100_000_000.0;
-                ui.label(format!("{:.8} TIME", fee));
+                ui.label(state.format_time(tx.fee));
                 ui.end_row();
             }
 
@@ -184,10 +186,9 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
                             ui.add_space(8.0);
 
                             // Amount
-                            let amount = tx.amount as f64 / 100_000_000.0;
-                            let sign = if tx.is_send || tx.is_fee { "-" } else { "+" };
+                            let is_neg = tx.is_send || tx.is_fee;
                             ui.label(
-                                egui::RichText::new(format!("{}{:.6} TIME", sign, amount))
+                                egui::RichText::new(state.format_time_signed(tx.amount, is_neg))
                                     .strong()
                                     .color(amount_color),
                             );

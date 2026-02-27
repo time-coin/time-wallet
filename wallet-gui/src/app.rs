@@ -132,7 +132,7 @@ impl eframe::App for App {
                 view::transactions::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Settings => {
-                view::settings::show(ui, &self.state);
+                view::settings::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Connections => {
                 view::connections::show(ui, &self.state);
