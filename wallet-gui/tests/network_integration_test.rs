@@ -163,7 +163,7 @@ async fn test_transaction_broadcast() {
     assert!(!tx.inputs.is_empty(), "Transaction should have inputs");
     assert!(!tx.outputs.is_empty(), "Transaction should have outputs");
     assert!(
-        tx.outputs.iter().any(|o| o.amount == 1000),
+        tx.outputs.iter().any(|o| o.value == 1000),
         "Should have recipient output"
     );
 

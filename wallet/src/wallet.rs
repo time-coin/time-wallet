@@ -333,7 +333,6 @@ impl Wallet {
 
         // Create transaction
         let mut tx = Transaction::new();
-        tx.set_nonce(self.nonce);
 
         // Add all selected UTXOs as inputs
         for utxo in &utxos_to_consolidate {
@@ -454,7 +453,6 @@ impl Wallet {
 
         // Create transaction
         let mut tx = Transaction::new();
-        tx.set_nonce(self.nonce);
 
         // Select UTXOs (simple: use first UTXOs that cover amount + fee)
         let mut input_amount = 0u64;
@@ -802,8 +800,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(tx.outputs.len(), 2); // recipient + change
-        assert_eq!(tx.outputs[0].amount, 1000);
-        assert_eq!(tx.outputs[1].amount, 8950); // 10000 - 1000 - 50
+        assert_eq!(tx.outputs[0].value, 1000);
+        assert_eq!(tx.outputs[1].value, 8950); // 10000 - 1000 - 50
         assert_eq!(sender.nonce(), 1); // Auto-incremented
     }
 

@@ -37,7 +37,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Inputs: {}", tx.inputs.len());
     println!("  Outputs: {}", tx.outputs.len());
     println!("  Total output: {} TIME", tx.total_output() / 100_000_000);
-    println!("  Nonce: {}\n", tx.nonce);
 
     // Verify the transaction signatures
     println!("Verifying transaction signatures...");

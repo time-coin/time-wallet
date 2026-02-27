@@ -242,7 +242,6 @@ pub async fn run(
                                 for addr in &state.addresses {
                                     match client.get_utxos(addr).await {
                                         Ok(utxos) => {
-                                            log::info!("📦 Fetched {} UTXOs for {}", utxos.len(), addr);
                                             all_utxos.extend(utxos);
                                         }
                                         Err(e) => {
@@ -250,7 +249,7 @@ pub async fn run(
                                         }
                                     }
                                 }
-                                log::info!("📦 Total UTXOs fetched: {}", all_utxos.len());
+                                log::debug!("UTXO sync: {} UTXOs fetched", all_utxos.len());
                                 let wallet = wm.get_active_wallet_mut();
                                 // Clear existing UTXOs and reload from masternode
                                 while !wallet.utxos().is_empty() {
@@ -290,8 +289,6 @@ pub async fn run(
                                     }
                                 }
                                 wallet.set_balance(total_balance);
-                                log::info!("📦 Wallet synced: {} UTXOs, balance={} sats, wallet.balance()={}",
-                                    wallet.utxo_count(), total_balance, wallet.balance());
 
                                 match wm.create_transaction(&to, amount, fee) {
                                     Ok(tx) => {

@@ -57,7 +57,7 @@ fn main() {
     println!("   Outputs: {}", tx.outputs.len());
     println!(
         "   Output amounts: {:?}",
-        tx.outputs.iter().map(|o| o.amount).collect::<Vec<_>>()
+        tx.outputs.iter().map(|o| o.value).collect::<Vec<_>>()
     );
     println!();
 

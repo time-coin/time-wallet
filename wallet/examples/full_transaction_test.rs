@@ -56,7 +56,7 @@ impl BlockchainSimulator {
 
         // Check all inputs exist and aren't spent
         for input in &tx.inputs {
-            if self.is_spent(from, &input.prev_tx, input.prev_index).await {
+            if self.is_spent(from, &input.previous_output.txid, input.previous_output.vout).await {
                 return Err("Double-spend detected!".to_string());
             }
         }
@@ -88,7 +88,7 @@ impl BlockchainSimulator {
 
         // Mark inputs as spent
         for input in &tx.inputs {
-            self.mark_spent(from.to_string(), input.prev_tx, input.prev_index)
+            self.mark_spent(from.to_string(), input.previous_output.txid, input.previous_output.vout)
                 .await;
         }
 
@@ -98,10 +98,10 @@ impl BlockchainSimulator {
             let utxo = UTXO {
                 tx_hash,
                 output_index: idx as u32,
-                amount: output.amount,
-                address: output.address.to_string(),
+                amount: output.value,
+                address: output.address_string(),
             };
-            self.add_utxo(output.address.to_string(), utxo).await;
+            self.add_utxo(output.address_string(), utxo).await;
         }
 
         Ok(())
@@ -129,8 +129,8 @@ fn wallet_tx_to_core_tx_relaxed(wallet_tx: &wallet::Transaction) -> time_core::T
             .outputs
             .iter()
             .map(|output| time_core::TxOutput {
-                amount: output.amount,
-                address: output.address.clone(),
+                amount: output.value,
+                address: output.address_string(),
             })
             .collect(),
         lock_time: wallet_tx.lock_time,
@@ -202,11 +202,11 @@ async fn main() {
             println!("  ✅ Transaction ACCEPTED by blockchain");
             // Update Alice's wallet with the UTXO
             for (idx, output) in tx1.outputs.iter().enumerate() {
-                if output.address == alice.address_string() {
+                if output.address_string() == alice.address_string() {
                     let utxo = UTXO {
                         tx_hash: tx1.hash(),
                         output_index: idx as u32,
-                        amount: output.amount,
+                        amount: output.value,
                         address: alice.address_string(),
                     };
                     alice.add_utxo(utxo);
@@ -237,11 +237,11 @@ async fn main() {
             println!("  ✅ Transaction ACCEPTED by blockchain");
             // Update Bob's wallet
             for (idx, output) in tx2.outputs.iter().enumerate() {
-                if output.address == bob.address_string() {
+                if output.address_string() == bob.address_string() {
                     let utxo = UTXO {
                         tx_hash: tx2.hash(),
                         output_index: idx as u32,
-                        amount: output.amount,
+                        amount: output.value,
                         address: bob.address_string(),
                     };
                     bob.add_utxo(utxo);

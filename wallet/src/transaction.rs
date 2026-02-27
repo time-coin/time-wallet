@@ -22,63 +22,65 @@ pub enum TransactionError {
     SerializationError,
 }
 
-/// Transaction input
+/// Outpoint referencing a previous transaction output (matches masternode OutPoint)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct OutPoint {
+    pub txid: [u8; 32],
+    pub vout: u32,
+}
+
+/// Transaction input (matches masternode TxInput)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TxInput {
-    /// Previous transaction hash
-    pub prev_tx: [u8; 32],
-    /// Output index in previous transaction
-    pub prev_index: u32,
-    /// Signature (empty before signing)
-    pub signature: Vec<u8>,
-    /// Public key of sender
-    pub public_key: Vec<u8>,
+    pub previous_output: OutPoint,
+    /// script_sig format: [32-byte Ed25519 pubkey || 64-byte signature]
+    pub script_sig: Vec<u8>,
+    pub sequence: u32,
 }
 
 impl TxInput {
     pub fn new(prev_tx: [u8; 32], prev_index: u32) -> Self {
         Self {
-            prev_tx,
-            prev_index,
-            signature: Vec::new(),
-            public_key: Vec::new(),
+            previous_output: OutPoint {
+                txid: prev_tx,
+                vout: prev_index,
+            },
+            script_sig: Vec::new(),
+            sequence: 0xFFFFFFFF,
         }
     }
 }
 
-/// Transaction output
+/// Transaction output (matches masternode TxOutput)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TxOutput {
-    /// Amount in smallest unit
-    pub amount: u64,
-    /// Recipient address
-    pub address: String,
+    pub value: u64,
+    /// script_pubkey stores the address string as bytes
+    pub script_pubkey: Vec<u8>,
 }
 
 impl TxOutput {
     pub fn new(amount: u64, address: Address) -> Self {
         Self {
-            amount,
-            address: address.to_string(),
+            value: amount,
+            script_pubkey: address.to_string().as_bytes().to_vec(),
         }
+    }
+
+    /// Get the address from script_pubkey
+    pub fn address_string(&self) -> String {
+        String::from_utf8_lossy(&self.script_pubkey).to_string()
     }
 }
 
-/// Transaction
+/// Transaction (matches masternode Transaction)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
-    /// Transaction version
     pub version: u32,
-    /// Transaction inputs
     pub inputs: Vec<TxInput>,
-    /// Transaction outputs
     pub outputs: Vec<TxOutput>,
-    /// Lock time (0 = not locked)
     pub lock_time: u32,
-    /// Nonce for transaction uniqueness
-    pub nonce: u64,
-    /// Timestamp
-    pub timestamp: u64,
+    pub timestamp: i64,
 }
 
 impl Transaction {
@@ -89,11 +91,10 @@ impl Transaction {
             inputs: Vec::new(),
             outputs: Vec::new(),
             lock_time: 0,
-            nonce: 0,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_secs() as i64,
         }
     }
 
@@ -104,23 +105,17 @@ impl Transaction {
 
     /// Add an output to the transaction
     pub fn add_output(&mut self, output: TxOutput) -> Result<(), TransactionError> {
-        if output.amount == 0 {
+        if output.value == 0 {
             return Err(TransactionError::InvalidAmount);
         }
         self.outputs.push(output);
         Ok(())
     }
 
-    /// Set nonce
-    pub fn set_nonce(&mut self, nonce: u64) {
-        self.nonce = nonce;
-    }
-
-    /// Calculate transaction hash
+    /// Calculate transaction hash (JSON-based, matches masternode txid())
     pub fn hash(&self) -> [u8; 32] {
-        let serialized = bincode::serialize(self).expect("Failed to serialize transaction");
-        let hash = Sha256::digest(&serialized);
-        hash.into()
+        let json = serde_json::to_string(self).expect("JSON serialization should succeed");
+        Sha256::digest(json.as_bytes()).into()
     }
 
     /// Get transaction hash as hex string (TXID)
@@ -128,28 +123,39 @@ impl Transaction {
         hex::encode(self.hash())
     }
 
-    /// Get the hash for signing (without signatures and public keys)
-    pub fn signing_hash(&self) -> [u8; 32] {
-        let mut tx_copy = self.clone();
-        for input in &mut tx_copy.inputs {
-            input.signature.clear();
-            input.public_key.clear();
+    /// Create signature message for a specific input (matches masternode)
+    fn create_signature_message(&self, input_idx: usize) -> Vec<u8> {
+        let mut signing_tx = self.clone();
+        for input in &mut signing_tx.inputs {
+            input.script_sig = vec![];
         }
-        tx_copy.hash()
+        let tx_hash = signing_tx.hash();
+
+        let mut message = Vec::new();
+        message.extend_from_slice(&tx_hash);
+        message.extend_from_slice(&(input_idx as u32).to_le_bytes());
+        let outputs_bytes =
+            bincode::serialize(&self.outputs).expect("Failed to serialize outputs");
+        let outputs_hash: [u8; 32] = Sha256::digest(&outputs_bytes).into();
+        message.extend_from_slice(&outputs_hash);
+        message
     }
 
-    /// Sign the transaction with a keypair
+    /// Sign the transaction with a keypair (produces masternode-compatible script_sig)
     pub fn sign(&mut self, keypair: &Keypair, input_index: usize) -> Result<(), TransactionError> {
         if input_index >= self.inputs.len() {
             return Err(TransactionError::InvalidInput);
         }
 
-        let signing_hash = self.signing_hash();
-        let signature = keypair.sign(&signing_hash);
-        let public_key = keypair.public_key_bytes().to_vec();
+        let message = self.create_signature_message(input_index);
+        let signature = keypair.sign(&message);
+        let pubkey_bytes = keypair.public_key_bytes();
 
-        self.inputs[input_index].signature = signature;
-        self.inputs[input_index].public_key = public_key;
+        // script_sig = [32-byte pubkey || 64-byte signature]
+        let mut script_sig = Vec::with_capacity(96);
+        script_sig.extend_from_slice(&pubkey_bytes);
+        script_sig.extend_from_slice(&signature);
+        self.inputs[input_index].script_sig = script_sig;
 
         Ok(())
     }
@@ -169,13 +175,16 @@ impl Transaction {
         }
 
         let input = &self.inputs[input_index];
-        if input.signature.is_empty() || input.public_key.is_empty() {
+        if input.script_sig.len() != 96 {
             return Err(TransactionError::InvalidSignature);
         }
 
-        let signing_hash = self.signing_hash();
+        let pubkey_bytes = &input.script_sig[..32];
+        let signature = &input.script_sig[32..96];
 
-        Keypair::verify_with_public_key(&input.public_key, &signing_hash, &input.signature)
+        let message = self.create_signature_message(input_index);
+
+        Keypair::verify_with_public_key(pubkey_bytes, &message, signature)
             .map_err(|_| TransactionError::InvalidSignature)
     }
 
@@ -194,7 +203,7 @@ impl Transaction {
 
     /// Get total output amount
     pub fn total_output(&self) -> u64 {
-        self.outputs.iter().map(|o| o.amount).sum()
+        self.outputs.iter().map(|o| o.value).sum()
     }
 
     /// Check if transaction is coinbase (no inputs)
@@ -202,7 +211,7 @@ impl Transaction {
         self.inputs.is_empty()
     }
 
-    /// Serialize to bytes
+    /// Serialize to bytes (bincode, matches masternode)
     pub fn to_bytes(&self) -> Result<Vec<u8>, TransactionError> {
         bincode::serialize(self).map_err(|_| TransactionError::SerializationError)
     }
@@ -296,7 +305,8 @@ mod tests {
 
         tx.sign_all(&keypair1).unwrap();
 
-        tx.inputs[0].signature = keypair2.sign(&tx.signing_hash());
+        // Corrupt the signature by flipping a byte
+        tx.inputs[0].script_sig[50] ^= 0xFF;
 
         assert!(tx.verify_all().is_err());
     }

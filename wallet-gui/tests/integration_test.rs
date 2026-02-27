@@ -120,8 +120,8 @@ fn test_complete_wallet_flow() {
 
     // Verify transaction
     assert_eq!(tx.outputs.len(), 2); // recipient + change
-    assert_eq!(tx.outputs[0].amount, 1000);
-    assert_eq!(tx.outputs[1].amount, 8990); // 10000 - 1000 - 10
+    assert_eq!(tx.outputs[0].value, 1000);
+    assert_eq!(tx.outputs[1].value, 8990); // 10000 - 1000 - 10
 
     println!("✅ Complete wallet flow test passed");
 }
