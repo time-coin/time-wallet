@@ -350,6 +350,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 /// Parse a human-readable TIME amount (e.g. "1.5") into micro-TIME units.
 fn parse_time_amount(s: &str) -> u64 {
     s.parse::<f64>()
-        .map(|v| (v * 100_000_000.0) as u64)
+        .map(|v| (v * 100_000_000.0).round() as u64)
         .unwrap_or(0)
 }

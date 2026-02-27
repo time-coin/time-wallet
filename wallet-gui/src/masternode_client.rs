@@ -131,10 +131,10 @@ impl MasternodeClient {
             .unwrap_or(0.0);
 
         // Convert TIME to satoshis (1 TIME = 100_000_000 satoshis)
-        let confirmed = (available_time * 100_000_000.0) as u64;
+        let confirmed = (available_time * 100_000_000.0).round() as u64;
         let pending = 0u64; // Masternode doesn't report pending separately
-        let total = (balance_time * 100_000_000.0) as u64;
-        let _locked = (_locked_time * 100_000_000.0) as u64;
+        let total = (balance_time * 100_000_000.0).round() as u64;
+        let _locked = (_locked_time * 100_000_000.0).round() as u64;
 
         let balance = Balance {
             confirmed,
@@ -165,8 +165,8 @@ impl MasternodeClient {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
 
-        let confirmed = (available_time * 100_000_000.0) as u64;
-        let total = (balance_time * 100_000_000.0) as u64;
+        let confirmed = (available_time * 100_000_000.0).round() as u64;
+        let total = (balance_time * 100_000_000.0).round() as u64;
 
         let balance = Balance {
             confirmed,
@@ -228,9 +228,9 @@ impl MasternodeClient {
                 let txid = tx.get("txid")?.as_str()?.to_string();
                 let category = tx.get("category")?.as_str().unwrap_or("unknown");
                 let amount_time = tx.get("amount")?.as_f64().unwrap_or(0.0);
-                let amount = (amount_time.abs() * 100_000_000.0) as u64;
+                let amount = (amount_time.abs() * 100_000_000.0).round() as u64;
                 let fee_time = tx.get("fee").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let fee = (fee_time.abs() * 100_000_000.0) as u64;
+                let fee = (fee_time.abs() * 100_000_000.0).round() as u64;
                 let in_block = tx.get("blockhash").and_then(|v| v.as_str()).is_some();
                 let timestamp = tx.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
 
@@ -289,7 +289,7 @@ impl MasternodeClient {
                 let txid = u.get("txid")?.as_str()?.to_string();
                 let vout = u.get("vout")?.as_u64()? as u32;
                 let amount_time = u.get("amount")?.as_f64().unwrap_or(0.0);
-                let amount = (amount_time * 100_000_000.0) as u64;
+                let amount = (amount_time * 100_000_000.0).round() as u64;
                 let addr = u
                     .get("address")
                     .and_then(|v| v.as_str())
