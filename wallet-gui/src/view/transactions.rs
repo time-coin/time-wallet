@@ -37,14 +37,16 @@ fn show_detail(ui: &mut Ui, state: &mut AppState, idx: usize) {
     ui.add_space(10.0);
 
     // Direction and amount
-    let (dir_label, amount_color) = if tx.is_send {
+    let (dir_label, amount_color) = if tx.is_fee {
+        ("Fee", egui::Color32::from_rgb(255, 165, 0))
+    } else if tx.is_send {
         ("Sent", egui::Color32::from_rgb(255, 80, 80))
     } else {
         ("Received", egui::Color32::from_rgb(80, 200, 80))
     };
 
     let amount = tx.amount as f64 / 100_000_000.0;
-    let sign = if tx.is_send { "-" } else { "+" };
+    let sign = if tx.is_send || tx.is_fee { "-" } else { "+" };
     ui.label(
         egui::RichText::new(format!("{} {}{:.6} TIME", dir_label, sign, amount))
             .size(24.0)
@@ -163,8 +165,10 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
                     .group(|ui| {
                         ui.set_min_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            // Send/receive icon
-                            let (dir_icon, amount_color) = if tx.is_send {
+                            // Send/receive/fee icon
+                            let (dir_icon, amount_color) = if tx.is_fee {
+                                ("Fee", egui::Color32::from_rgb(255, 165, 0))
+                            } else if tx.is_send {
                                 ("Sent", egui::Color32::from_rgb(255, 80, 80))
                             } else {
                                 ("Received", egui::Color32::from_rgb(80, 200, 80))
@@ -175,12 +179,27 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
 
                             // Amount
                             let amount = tx.amount as f64 / 100_000_000.0;
-                            let sign = if tx.is_send { "-" } else { "+" };
+                            let sign = if tx.is_send || tx.is_fee { "-" } else { "+" };
                             ui.label(
                                 egui::RichText::new(format!("{}{:.6} TIME", sign, amount))
                                     .strong()
                                     .color(amount_color),
                             );
+
+                            ui.add_space(8.0);
+
+                            // Abbreviated address
+                            let addr_label = if tx.is_fee {
+                                tx.address.clone()
+                            } else {
+                                let addr = &tx.address;
+                                if addr.len() > 14 {
+                                    format!("{}..{}", &addr[..8], &addr[addr.len() - 4..])
+                                } else {
+                                    addr.clone()
+                                }
+                            };
+                            ui.label(egui::RichText::new(addr_label).color(egui::Color32::GRAY));
 
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -217,9 +236,13 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
 
                                     ui.add_space(12.0);
 
-                                    // Short txid
-                                    let short_txid = if tx.txid.len() > 16 {
-                                        format!("{}..", &tx.txid[..16])
+                                    // Short txid (first 8 .. last 4)
+                                    let short_txid = if tx.txid.len() > 12 {
+                                        format!(
+                                            "{}..{}",
+                                            &tx.txid[..8],
+                                            &tx.txid[tx.txid.len() - 4..]
+                                        )
                                     } else {
                                         tx.txid.clone()
                                     };

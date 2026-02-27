@@ -176,11 +176,12 @@ impl AppState {
                     .map(|t| t.txid.clone())
                     .collect();
 
-                // Keep WS-injected txs whose txid is not yet in the RPC results
+                // Keep WS-injected txs whose txid is not yet in the RPC results,
+                // and always preserve fee line items (they don't come from RPC)
                 let ws_only: Vec<_> = self
                     .transactions
                     .iter()
-                    .filter(|t| !rpc_txids.contains(&t.txid))
+                    .filter(|t| t.is_fee || !rpc_txids.contains(&t.txid))
                     .cloned()
                     .collect();
 
@@ -233,8 +234,12 @@ impl AppState {
             }
 
             ServiceEvent::TransactionInserted(tx) => {
-                // Insert if not already present, then re-sort
-                if !self.transactions.iter().any(|t| t.txid == tx.txid) {
+                // Insert if not already present (fee entries share txid, so check is_fee too)
+                let exists = self
+                    .transactions
+                    .iter()
+                    .any(|t| t.txid == tx.txid && t.is_fee == tx.is_fee);
+                if !exists {
                     self.transactions.push(tx);
                     self.transactions
                         .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -243,7 +248,8 @@ impl AppState {
             }
 
             ServiceEvent::TransactionFinalityUpdated { txid, finalized } => {
-                if let Some(tx) = self.transactions.iter_mut().find(|t| t.txid == txid) {
+                // Update all entries with this txid (including fee line items)
+                for tx in self.transactions.iter_mut().filter(|t| t.txid == txid) {
                     if finalized {
                         tx.status = TransactionStatus::Approved;
                     }
@@ -305,7 +311,11 @@ impl AppState {
         let mut pending: u64 = 0;
 
         for tx in &self.transactions {
-            let net = if tx.is_send { 0u64 } else { tx.amount };
+            let net = if tx.is_send || tx.is_fee {
+                0u64
+            } else {
+                tx.amount
+            };
 
             match tx.status {
                 TransactionStatus::Approved => confirmed = confirmed.saturating_add(net),
@@ -314,11 +324,11 @@ impl AppState {
             }
         }
 
-        // Subtract sent amounts
+        // Subtract sent and fee amounts
         for tx in &self.transactions {
-            if tx.is_send {
-                let spent = tx.amount.saturating_add(tx.fee);
-                confirmed = confirmed.saturating_sub(spent);
+            if tx.is_send || tx.is_fee {
+                // Fee entries carry the fee in .amount; send entries carry send amount only
+                confirmed = confirmed.saturating_sub(tx.amount);
             }
         }
 

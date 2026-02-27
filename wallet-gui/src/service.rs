@@ -291,7 +291,36 @@ pub async fn run(
                                 wallet.set_balance(total_balance);
 
                                 match wm.create_transaction(&to, amount, fee) {
-                                    Ok(tx) => {
+                                    Ok(mut tx) => {
+                                        // Re-sign inputs with correct HD keypairs.
+                                        // create_transaction signs all inputs with the index-0 key,
+                                        // but UTXOs may belong to different HD-derived addresses.
+                                        let addr_to_index: std::collections::HashMap<String, u32> =
+                                            (0..wm.get_address_count())
+                                                .filter_map(|i| wm.derive_address(i).ok().map(|a| (a, i)))
+                                                .collect();
+
+                                        // Collect which inputs need re-signing
+                                        let mut resignings: Vec<(usize, u32)> = Vec::new();
+                                        for (input_idx, input) in tx.inputs.iter().enumerate() {
+                                            let input_txid: String = input.previous_output.txid.iter().map(|b| format!("{:02x}", b)).collect();
+                                            let input_vout = input.previous_output.vout;
+                                            if let Some(utxo) = all_utxos.iter().find(|u| u.txid == input_txid && u.vout == input_vout) {
+                                                if let Some(&hd_index) = addr_to_index.get(&utxo.address) {
+                                                    if hd_index != 0 {
+                                                        resignings.push((input_idx, hd_index));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        for (input_idx, hd_index) in resignings {
+                                            if let Ok(kp) = wm.derive_keypair(hd_index) {
+                                                log::info!("Re-signing input {} with HD key index {}", input_idx, hd_index);
+                                                let _ = tx.sign(&kp, input_idx);
+                                            }
+                                        }
+
+                                        let actual_fee = wallet::calculate_fee(amount);
                                         // Serialize to bincode bytes then hex-encode for sendrawtransaction
                                         match tx.to_bytes() {
                                             Ok(bytes) => {
@@ -299,20 +328,37 @@ pub async fn run(
                                                 match client.broadcast_transaction(&tx_hex).await {
                                                     Ok(txid) => {
                                                         let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid: txid.clone() });
+                                                        let now = std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .map(|d| d.as_secs() as i64)
+                                                            .unwrap_or(0);
                                                         let sent_record = crate::masternode_client::TransactionRecord {
                                                             txid: txid.clone(),
                                                             vout: 0,
                                                             is_send: true,
                                                             address: to.clone(),
                                                             amount,
-                                                            fee,
-                                                            timestamp: std::time::SystemTime::now()
-                                                                .duration_since(std::time::UNIX_EPOCH)
-                                                                .map(|d| d.as_secs() as i64)
-                                                                .unwrap_or(0),
+                                                            fee: actual_fee,
+                                                            timestamp: now,
                                                             status: crate::masternode_client::TransactionStatus::Pending,
+                                                            is_fee: false,
                                                         };
                                                         let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record));
+                                                        // Insert fee as a separate ledger entry
+                                                        if actual_fee > 0 {
+                                                            let fee_record = crate::masternode_client::TransactionRecord {
+                                                                txid: txid.clone(),
+                                                                vout: 0,
+                                                                is_send: true,
+                                                                address: "Network Fee".to_string(),
+                                                                amount: actual_fee,
+                                                                fee: 0,
+                                                                timestamp: now,
+                                                                status: crate::masternode_client::TransactionStatus::Pending,
+                                                                is_fee: true,
+                                                            };
+                                                            let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(fee_record));
+                                                        }
                                                         if !state.addresses.is_empty() {
                                                             if let Ok(balance) = client.get_balances(&state.addresses).await {
                                                                 let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(balance));
@@ -531,6 +577,7 @@ pub async fn run(
                             fee: 0,
                             timestamp: notification.timestamp,
                             status: TransactionStatus::Pending,
+                            is_fee: false,
                         };
                         let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
                         let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification.clone()));
@@ -560,6 +607,7 @@ pub async fn run(
                             fee: 0,
                             timestamp: chrono::Utc::now().timestamp(),
                             status: TransactionStatus::Approved,
+                            is_fee: false,
                         };
                         let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
 

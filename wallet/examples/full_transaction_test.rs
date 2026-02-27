@@ -56,7 +56,14 @@ impl BlockchainSimulator {
 
         // Check all inputs exist and aren't spent
         for input in &tx.inputs {
-            if self.is_spent(from, &input.previous_output.txid, input.previous_output.vout).await {
+            if self
+                .is_spent(
+                    from,
+                    &input.previous_output.txid,
+                    input.previous_output.vout,
+                )
+                .await
+            {
                 return Err("Double-spend detected!".to_string());
             }
         }
@@ -88,8 +95,12 @@ impl BlockchainSimulator {
 
         // Mark inputs as spent
         for input in &tx.inputs {
-            self.mark_spent(from.to_string(), input.previous_output.txid, input.previous_output.vout)
-                .await;
+            self.mark_spent(
+                from.to_string(),
+                input.previous_output.txid,
+                input.previous_output.vout,
+            )
+            .await;
         }
 
         // Create new UTXOs for outputs

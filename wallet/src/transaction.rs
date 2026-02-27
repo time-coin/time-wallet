@@ -134,8 +134,7 @@ impl Transaction {
         let mut message = Vec::new();
         message.extend_from_slice(&tx_hash);
         message.extend_from_slice(&(input_idx as u32).to_le_bytes());
-        let outputs_bytes =
-            bincode::serialize(&self.outputs).expect("Failed to serialize outputs");
+        let outputs_bytes = bincode::serialize(&self.outputs).expect("Failed to serialize outputs");
         let outputs_hash: [u8; 32] = Sha256::digest(&outputs_bytes).into();
         message.extend_from_slice(&outputs_hash);
         message
@@ -292,7 +291,7 @@ mod tests {
     #[test]
     fn test_invalid_signature() {
         let keypair1 = Keypair::generate().expect("Failed to generate keypair");
-        let keypair2 = Keypair::generate().expect("Failed to generate keypair");
+        let _keypair2 = Keypair::generate().expect("Failed to generate keypair");
         let public_key = keypair1.public_key_bytes();
         let address = Address::from_public_key(&public_key, NetworkType::Mainnet)
             .expect("Failed to generate address");

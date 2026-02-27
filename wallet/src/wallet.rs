@@ -71,10 +71,22 @@ impl Default for FeeSchedule {
     fn default() -> Self {
         Self {
             tiers: vec![
-                FeeTier { up_to: 100 * SATOSHIS_PER_TIME,    rate_bps: 100 },  // < 100 TIME  → 1%
-                FeeTier { up_to: 1_000 * SATOSHIS_PER_TIME,  rate_bps: 50  },  // < 1k TIME   → 0.5%
-                FeeTier { up_to: 10_000 * SATOSHIS_PER_TIME, rate_bps: 25  },  // < 10k TIME  → 0.25%
-                FeeTier { up_to: u64::MAX,                   rate_bps: 10  },  // >= 10k TIME → 0.1%
+                FeeTier {
+                    up_to: 100 * SATOSHIS_PER_TIME,
+                    rate_bps: 100,
+                }, // < 100 TIME  → 1%
+                FeeTier {
+                    up_to: 1_000 * SATOSHIS_PER_TIME,
+                    rate_bps: 50,
+                }, // < 1k TIME   → 0.5%
+                FeeTier {
+                    up_to: 10_000 * SATOSHIS_PER_TIME,
+                    rate_bps: 25,
+                }, // < 10k TIME  → 0.25%
+                FeeTier {
+                    up_to: u64::MAX,
+                    rate_bps: 10,
+                }, // >= 10k TIME → 0.1%
             ],
             min_fee: MIN_TX_FEE,
         }
@@ -904,28 +916,28 @@ mod tests {
         let mut sender = Wallet::new(NetworkType::Mainnet).unwrap();
         let recipient = Wallet::new(NetworkType::Mainnet).unwrap();
 
-        // Add UTXO to sender
+        // Add UTXO to sender (10 TIME = 1,000,000,000 sats)
         let utxo = UTXO {
             tx_hash: [1u8; 32],
             output_index: 0,
-            amount: 10000,
+            amount: 1_000_000_000,
             address: sender.address_string(),
         };
         sender.add_utxo(utxo);
 
         // Verify initial state
-        assert_eq!(sender.balance(), 10000);
+        assert_eq!(sender.balance(), 1_000_000_000);
         assert_eq!(sender.utxos().len(), 1);
 
         // Create transaction - this should IMMEDIATELY remove spent UTXOs
+        // Send 1 TIME; fee = 1% of 1 TIME = 0.01 TIME (minimum)
         let _tx = sender
-            .create_transaction(&recipient.address_string(), 1000, 50)
+            .create_transaction(&recipient.address_string(), 100_000_000, 0)
             .unwrap();
 
         // CRITICAL TEST: Balance should be updated IMMEDIATELY (instant finality)
-        // The spent UTXO (10000) is removed
-        // Change output (8950) will be added when transaction is finalized
-        // For now, balance reflects only spent UTXOs being removed
+        // The spent UTXO (10 TIME) is removed
+        // Change output will be added when transaction is finalized
         assert_eq!(
             sender.balance(),
             0,
@@ -938,7 +950,7 @@ mod tests {
         );
 
         // In a real scenario, when the transaction is finalized (within 3 seconds),
-        // the change output (8950) would be added back to the wallet as a new UTXO
+        // the change output would be added back to the wallet as a new UTXO
     }
 
     #[test]

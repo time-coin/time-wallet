@@ -38,5 +38,5 @@ pub use mnemonic::{
     validate_mnemonic, xpub_to_address, MnemonicError, MnemonicPhrase,
 };
 pub use pin::{PinAuth, PinConfig, PinError, SecurePin, StoredPin};
-pub use transaction::{Transaction, TransactionError, TxInput, TxOutput, OutPoint};
+pub use transaction::{OutPoint, Transaction, TransactionError, TxInput, TxOutput};
 pub use wallet::{calculate_fee, FeeSchedule, FeeTier, Wallet, WalletError, UTXO};
