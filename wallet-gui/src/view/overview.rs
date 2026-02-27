@@ -163,9 +163,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                                 addr.clone()
                             }
                         };
-                        ui.label(
-                            egui::RichText::new(addr_display).color(egui::Color32::GRAY),
-                        );
+                        ui.label(egui::RichText::new(addr_display).color(egui::Color32::GRAY));
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // Status

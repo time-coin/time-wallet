@@ -130,8 +130,14 @@ impl Default for AppState {
 }
 
 impl AppState {
-    /// Look up a contact name for an address. Returns None if not found.
+    /// Look up a display name for an address. Checks own wallet address labels
+    /// first, then contacts. Returns None if not found.
     pub fn contact_name(&self, address: &str) -> Option<&str> {
+        // Check own wallet addresses (e.g. "First Address")
+        if let Some(info) = self.addresses.iter().find(|a| a.address == address) {
+            return Some(&info.label);
+        }
+        // Check contacts
         self.contacts
             .iter()
             .find(|c| c.address == address)
