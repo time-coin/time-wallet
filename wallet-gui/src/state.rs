@@ -205,6 +205,10 @@ impl AppState {
                     self.transactions.insert(0, tx);
                 }
 
+                // Sort newest first
+                self.transactions
+                    .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
                 self.recompute_pending_balance();
             }
 
@@ -229,9 +233,11 @@ impl AppState {
             }
 
             ServiceEvent::TransactionInserted(tx) => {
-                // Insert at front if not already present
+                // Insert if not already present, then re-sort
                 if !self.transactions.iter().any(|t| t.txid == tx.txid) {
-                    self.transactions.insert(0, tx);
+                    self.transactions.push(tx);
+                    self.transactions
+                        .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
                 }
                 self.recompute_pending_balance();
             }
@@ -291,28 +297,20 @@ impl AppState {
         }
     }
 
-    /// Recompute the pending balance from Pending transactions not yet
-    /// reflected in the masternode's confirmed balance.
+    /// Recompute the pending balance from incoming Pending transactions
+    /// not yet reflected in the masternode's confirmed balance.
+    /// Outgoing sends are already reflected in the masternode's available balance
+    /// (spent UTXOs move out of Unspent state immediately).
     fn recompute_pending_balance(&mut self) {
-        let mut incoming: u64 = 0;
-        let mut outgoing: u64 = 0;
+        let incoming: u64 = self
+            .transactions
+            .iter()
+            .filter(|tx| matches!(tx.status, TransactionStatus::Pending) && !tx.is_send)
+            .map(|tx| tx.amount)
+            .sum();
 
-        for tx in &self.transactions {
-            if matches!(tx.status, TransactionStatus::Pending) {
-                if tx.is_send {
-                    outgoing = outgoing.saturating_add(tx.amount.saturating_add(tx.fee));
-                } else {
-                    incoming = incoming.saturating_add(tx.amount);
-                }
-            }
-        }
-
-        self.balance.pending = incoming.saturating_add(outgoing);
-        self.balance.total = self
-            .balance
-            .confirmed
-            .saturating_add(incoming)
-            .saturating_sub(outgoing);
+        self.balance.pending = incoming;
+        self.balance.total = self.balance.confirmed.saturating_add(incoming);
     }
 }
 
