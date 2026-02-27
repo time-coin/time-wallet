@@ -157,9 +157,9 @@ impl AppState {
                 self.loading = false;
             }
 
-            ServiceEvent::BalanceUpdated(balance) => {
-                self.balance = balance;
-                self.recompute_pending_balance();
+            ServiceEvent::BalanceUpdated(_balance) => {
+                // We ignore the masternode's balance and compute from transactions
+                self.recompute_balance();
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
@@ -209,7 +209,7 @@ impl AppState {
                 self.transactions
                     .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-                self.recompute_pending_balance();
+                self.recompute_balance();
             }
 
             ServiceEvent::UtxosUpdated(utxos) => {
@@ -239,7 +239,7 @@ impl AppState {
                     self.transactions
                         .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
                 }
-                self.recompute_pending_balance();
+                self.recompute_balance();
             }
 
             ServiceEvent::TransactionFinalityUpdated { txid, finalized } => {
@@ -248,7 +248,7 @@ impl AppState {
                         tx.status = TransactionStatus::Approved;
                     }
                 }
-                self.recompute_pending_balance();
+                self.recompute_balance();
             }
 
             ServiceEvent::HealthUpdated(health) => {
@@ -297,20 +297,39 @@ impl AppState {
         }
     }
 
-    /// Recompute the pending balance from incoming Pending transactions
-    /// not yet reflected in the masternode's confirmed balance.
-    /// Outgoing sends are already reflected in the masternode's available balance
-    /// (spent UTXOs move out of Unspent state immediately).
-    fn recompute_pending_balance(&mut self) {
-        let incoming: u64 = self
-            .transactions
-            .iter()
-            .filter(|tx| matches!(tx.status, TransactionStatus::Pending) && !tx.is_send)
-            .map(|tx| tx.amount)
-            .sum();
+    /// Recompute balance entirely from the local transaction list.
+    /// This is more accurate than the masternode's UTXO-based `available`
+    /// because it includes finalized-but-not-yet-in-block transactions.
+    fn recompute_balance(&mut self) {
+        let mut confirmed: u64 = 0;
+        let mut pending: u64 = 0;
 
-        self.balance.pending = incoming;
-        self.balance.total = self.balance.confirmed.saturating_add(incoming);
+        for tx in &self.transactions {
+            let net = if tx.is_send {
+                // sends reduce balance (amount + fee already spent)
+                0u64
+            } else {
+                tx.amount
+            };
+
+            match tx.status {
+                TransactionStatus::Approved => confirmed = confirmed.saturating_add(net),
+                TransactionStatus::Pending => pending = pending.saturating_add(net),
+                _ => {}
+            }
+        }
+
+        // Subtract sent amounts
+        for tx in &self.transactions {
+            if tx.is_send {
+                let spent = tx.amount.saturating_add(tx.fee);
+                confirmed = confirmed.saturating_sub(spent);
+            }
+        }
+
+        self.balance.confirmed = confirmed;
+        self.balance.pending = pending;
+        self.balance.total = confirmed.saturating_add(pending);
     }
 }
 
@@ -351,10 +370,11 @@ mod tests {
             pending: 500,
             total: 1500,
         }));
-        assert_eq!(state.balance.confirmed, 1000);
-        // No pending transactions → pending recomputed to 0, total = confirmed
+        // Balance is computed from transactions, not from masternode RPC
+        // No transactions → all zero
+        assert_eq!(state.balance.confirmed, 0);
         assert_eq!(state.balance.pending, 0);
-        assert_eq!(state.balance.total, 1000);
+        assert_eq!(state.balance.total, 0);
     }
 
     #[test]
