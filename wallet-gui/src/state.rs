@@ -159,17 +159,14 @@ impl AppState {
 
             ServiceEvent::BalanceUpdated(balance) => {
                 self.balance = balance;
+                self.recompute_pending_balance();
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
-                // Merge: keep WS-injected pending txs not yet in RPC results
-                let pending_ws: Vec<_> = self
-                    .transactions
-                    .iter()
-                    .filter(|t| matches!(t.status, TransactionStatus::Pending))
-                    .filter(|t| !txs.iter().any(|rpc_tx| rpc_tx.txid == t.txid))
-                    .cloned()
-                    .collect();
+                // Build set of txids already present in the new RPC results
+                let rpc_txids: std::collections::HashSet<String> =
+                    txs.iter().map(|t| t.txid.clone()).collect();
+
                 // Preserve Approved status: if a tx was already Approved (via WS finality),
                 // don't let a poll result downgrade it back to Pending
                 let approved_txids: std::collections::HashSet<String> = self
@@ -178,7 +175,23 @@ impl AppState {
                     .filter(|t| matches!(t.status, TransactionStatus::Approved))
                     .map(|t| t.txid.clone())
                     .collect();
-                self.transactions = txs;
+
+                // Keep WS-injected txs whose txid is not yet in the RPC results
+                let ws_only: Vec<_> = self
+                    .transactions
+                    .iter()
+                    .filter(|t| !rpc_txids.contains(&t.txid))
+                    .cloned()
+                    .collect();
+
+                // Deduplicate the RPC results by txid (keep first occurrence)
+                let mut seen = std::collections::HashSet::new();
+                self.transactions = txs
+                    .into_iter()
+                    .filter(|t| seen.insert(t.txid.clone()))
+                    .collect();
+
+                // Restore Approved status from WS finality
                 for tx in &mut self.transactions {
                     if matches!(tx.status, TransactionStatus::Pending)
                         && approved_txids.contains(&tx.txid)
@@ -186,9 +199,13 @@ impl AppState {
                         tx.status = TransactionStatus::Approved;
                     }
                 }
-                for tx in pending_ws.into_iter().rev() {
+
+                // Append WS-only txs at the front
+                for tx in ws_only.into_iter().rev() {
                     self.transactions.insert(0, tx);
                 }
+
+                self.recompute_pending_balance();
             }
 
             ServiceEvent::UtxosUpdated(utxos) => {
@@ -216,6 +233,7 @@ impl AppState {
                 if !self.transactions.iter().any(|t| t.txid == tx.txid) {
                     self.transactions.insert(0, tx);
                 }
+                self.recompute_pending_balance();
             }
 
             ServiceEvent::TransactionFinalityUpdated { txid, finalized } => {
@@ -224,6 +242,7 @@ impl AppState {
                         tx.status = TransactionStatus::Approved;
                     }
                 }
+                self.recompute_pending_balance();
             }
 
             ServiceEvent::HealthUpdated(health) => {
@@ -271,6 +290,30 @@ impl AppState {
             }
         }
     }
+
+    /// Recompute the pending balance from Pending transactions not yet
+    /// reflected in the masternode's confirmed balance.
+    fn recompute_pending_balance(&mut self) {
+        let mut incoming: u64 = 0;
+        let mut outgoing: u64 = 0;
+
+        for tx in &self.transactions {
+            if matches!(tx.status, TransactionStatus::Pending) {
+                if tx.is_send {
+                    outgoing = outgoing.saturating_add(tx.amount.saturating_add(tx.fee));
+                } else {
+                    incoming = incoming.saturating_add(tx.amount);
+                }
+            }
+        }
+
+        self.balance.pending = incoming.saturating_add(outgoing);
+        self.balance.total = self
+            .balance
+            .confirmed
+            .saturating_add(incoming)
+            .saturating_sub(outgoing);
+    }
 }
 
 #[cfg(test)]
@@ -311,8 +354,9 @@ mod tests {
             total: 1500,
         }));
         assert_eq!(state.balance.confirmed, 1000);
-        assert_eq!(state.balance.pending, 500);
-        assert_eq!(state.balance.total, 1500);
+        // No pending transactions → pending recomputed to 0, total = confirmed
+        assert_eq!(state.balance.pending, 0);
+        assert_eq!(state.balance.total, 1000);
     }
 
     #[test]

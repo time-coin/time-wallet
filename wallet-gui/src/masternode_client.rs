@@ -235,7 +235,10 @@ impl MasternodeClient {
                 let timestamp = tx.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
 
                 // Instant finality: check finalized flag from consensus, then blockhash
-                let finalized = tx.get("finalized").and_then(|v| v.as_bool()).unwrap_or(false);
+                let finalized = tx
+                    .get("finalized")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let status = if in_block || finalized {
                     TransactionStatus::Approved
                 } else {
