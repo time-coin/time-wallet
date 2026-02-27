@@ -305,12 +305,7 @@ impl AppState {
         let mut pending: u64 = 0;
 
         for tx in &self.transactions {
-            let net = if tx.is_send {
-                // sends reduce balance (amount + fee already spent)
-                0u64
-            } else {
-                tx.amount
-            };
+            let net = if tx.is_send { 0u64 } else { tx.amount };
 
             match tx.status {
                 TransactionStatus::Approved => confirmed = confirmed.saturating_add(net),

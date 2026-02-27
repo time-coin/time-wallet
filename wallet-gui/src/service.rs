@@ -237,6 +237,53 @@ pub async fn run(
                     UiEvent::SendTransaction { to, amount, fee } => {
                         if let Some(ref client) = state.client {
                             if let Some(ref mut wm) = state.wallet {
+                                // Fetch UTXOs from masternode and sync into wallet
+                                let mut all_utxos = Vec::new();
+                                for addr in &state.addresses {
+                                    if let Ok(utxos) = client.get_utxos(addr).await {
+                                        all_utxos.extend(utxos);
+                                    }
+                                }
+                                let wallet = wm.get_active_wallet_mut();
+                                // Clear existing UTXOs and reload from masternode
+                                while !wallet.utxos().is_empty() {
+                                    let u = wallet.utxos()[0].clone();
+                                    wallet.remove_utxo(&u.tx_hash, u.output_index);
+                                }
+                                let mut total_balance = 0u64;
+                                for utxo in &all_utxos {
+                                    let mut tx_hash = [0u8; 32];
+                                    let hex_chars: Vec<u8> = utxo.txid.bytes().collect();
+                                    let mut valid = hex_chars.len() == 64;
+                                    if valid {
+                                        for i in 0..32 {
+                                            let hi = match hex_chars[i * 2] {
+                                                b'0'..=b'9' => hex_chars[i * 2] - b'0',
+                                                b'a'..=b'f' => hex_chars[i * 2] - b'a' + 10,
+                                                b'A'..=b'F' => hex_chars[i * 2] - b'A' + 10,
+                                                _ => { valid = false; break; }
+                                            };
+                                            let lo = match hex_chars[i * 2 + 1] {
+                                                b'0'..=b'9' => hex_chars[i * 2 + 1] - b'0',
+                                                b'a'..=b'f' => hex_chars[i * 2 + 1] - b'a' + 10,
+                                                b'A'..=b'F' => hex_chars[i * 2 + 1] - b'A' + 10,
+                                                _ => { valid = false; break; }
+                                            };
+                                            tx_hash[i] = (hi << 4) | lo;
+                                        }
+                                    }
+                                    if valid {
+                                        wallet.add_utxo(wallet::wallet::UTXO {
+                                            tx_hash,
+                                            output_index: utxo.vout,
+                                            amount: utxo.amount,
+                                            address: utxo.address.clone(),
+                                        });
+                                        total_balance += utxo.amount;
+                                    }
+                                }
+                                wallet.set_balance(total_balance);
+
                                 match wm.create_transaction(&to, amount, fee) {
                                     Ok(tx) => {
                                         let tx_hex = serde_json::to_string(&tx).unwrap_or_default();
