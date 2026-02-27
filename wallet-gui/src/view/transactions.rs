@@ -154,80 +154,91 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
     ui.add_space(5.0);
 
     let mut clicked_idx = None;
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for (i, tx) in state.transactions.iter().enumerate() {
-            let resp = ui
-                .group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        // Send/receive icon
-                        let (dir_icon, amount_color) = if tx.is_send {
-                            ("Sent", egui::Color32::from_rgb(255, 80, 80))
-                        } else {
-                            ("Received", egui::Color32::from_rgb(80, 200, 80))
-                        };
-                        ui.label(egui::RichText::new(dir_icon).color(amount_color));
-
-                        ui.add_space(8.0);
-
-                        // Amount
-                        let amount = tx.amount as f64 / 100_000_000.0;
-                        let sign = if tx.is_send { "-" } else { "+" };
-                        ui.label(
-                            egui::RichText::new(format!("{}{:.6} TIME", sign, amount))
-                                .strong()
-                                .color(amount_color),
-                        );
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Status
-                            let (status_text, status_color) = match tx.status {
-                                TransactionStatus::Approved => ("Approved", egui::Color32::GREEN),
-                                TransactionStatus::Pending => {
-                                    ("Pending", egui::Color32::from_rgb(255, 165, 0))
-                                }
-                                TransactionStatus::Declined => ("Declined", egui::Color32::RED),
-                            };
-                            ui.label(egui::RichText::new(status_text).color(status_color));
-
-                            ui.add_space(12.0);
-
-                            // Date
-                            if tx.timestamp > 0 {
-                                if let Some(dt) = chrono::DateTime::from_timestamp(tx.timestamp, 0)
-                                {
-                                    ui.label(
-                                        egui::RichText::new(
-                                            dt.format("%Y-%m-%d %H:%M").to_string(),
-                                        )
-                                        .color(egui::Color32::GRAY),
-                                    );
-                                }
-                            }
-
-                            ui.add_space(12.0);
-
-                            // Short txid
-                            let short_txid = if tx.txid.len() > 16 {
-                                format!("{}..", &tx.txid[..16])
+    egui::ScrollArea::vertical()
+        .id_salt("tx_list_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for (i, tx) in state.transactions.iter().enumerate() {
+                let resp = ui
+                    .group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            // Send/receive icon
+                            let (dir_icon, amount_color) = if tx.is_send {
+                                ("Sent", egui::Color32::from_rgb(255, 80, 80))
                             } else {
-                                tx.txid.clone()
+                                ("Received", egui::Color32::from_rgb(80, 200, 80))
                             };
+                            ui.label(egui::RichText::new(dir_icon).color(amount_color));
+
+                            ui.add_space(8.0);
+
+                            // Amount
+                            let amount = tx.amount as f64 / 100_000_000.0;
+                            let sign = if tx.is_send { "-" } else { "+" };
                             ui.label(
-                                egui::RichText::new(short_txid)
-                                    .monospace()
-                                    .color(egui::Color32::DARK_GRAY),
+                                egui::RichText::new(format!("{}{:.6} TIME", sign, amount))
+                                    .strong()
+                                    .color(amount_color),
+                            );
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    // Status
+                                    let (status_text, status_color) = match tx.status {
+                                        TransactionStatus::Approved => {
+                                            ("Approved", egui::Color32::GREEN)
+                                        }
+                                        TransactionStatus::Pending => {
+                                            ("Pending", egui::Color32::from_rgb(255, 165, 0))
+                                        }
+                                        TransactionStatus::Declined => {
+                                            ("Declined", egui::Color32::RED)
+                                        }
+                                    };
+                                    ui.label(egui::RichText::new(status_text).color(status_color));
+
+                                    ui.add_space(12.0);
+
+                                    // Date
+                                    if tx.timestamp > 0 {
+                                        if let Some(dt) =
+                                            chrono::DateTime::from_timestamp(tx.timestamp, 0)
+                                        {
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    dt.format("%Y-%m-%d %H:%M").to_string(),
+                                                )
+                                                .color(egui::Color32::GRAY),
+                                            );
+                                        }
+                                    }
+
+                                    ui.add_space(12.0);
+
+                                    // Short txid
+                                    let short_txid = if tx.txid.len() > 16 {
+                                        format!("{}..", &tx.txid[..16])
+                                    } else {
+                                        tx.txid.clone()
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(short_txid)
+                                            .monospace()
+                                            .color(egui::Color32::DARK_GRAY),
+                                    );
+                                },
                             );
                         });
-                    });
-                })
-                .response;
+                    })
+                    .response;
 
-            if resp.interact(egui::Sense::click()).clicked() {
-                clicked_idx = Some(i);
+                if resp.interact(egui::Sense::click()).clicked() {
+                    clicked_idx = Some(i);
+                }
             }
-        }
-    });
+        });
 
     if let Some(idx) = clicked_idx {
         state.selected_transaction = Some(idx);
