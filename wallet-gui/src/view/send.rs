@@ -132,7 +132,24 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         ui.add_space(15.0);
 
-        let address_valid = state.send_address.starts_with(expected_prefix);
+        // Full address validation with checksum
+        let address_valid = if state.send_address.starts_with(expected_prefix) {
+            wallet::address::Address::from_string(&state.send_address).is_ok()
+        } else {
+            false
+        };
+
+        // Show checksum error if prefix is right but checksum fails
+        if !state.send_address.is_empty()
+            && state.send_address.starts_with(expected_prefix)
+            && !address_valid
+        {
+            ui.colored_label(
+                egui::Color32::RED,
+                "Invalid address checksum — check for typos",
+            );
+        }
+
         let can_send = address_valid
             && !state.send_address.is_empty()
             && !state.send_amount.is_empty()
@@ -209,10 +226,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         .hint_text(format!("{}...", expected_prefix))
                         .desired_width(250.0),
                 );
-                let can_save = !state.new_contact_name.is_empty()
-                    && state.new_contact_address.starts_with(expected_prefix);
+                let contact_addr_valid = !state.new_contact_name.is_empty()
+                    && wallet::address::Address::from_string(&state.new_contact_address).is_ok();
                 if ui
-                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .add_enabled(contact_addr_valid, egui::Button::new("Save"))
                     .clicked()
                 {
                     let _ = ui_tx.send(UiEvent::SaveContact {
