@@ -26,13 +26,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         ui.label("Recipient Address");
 
-        // Show contact name if the current address matches a contact
-        let contact_name = state
-            .contacts
-            .iter()
-            .find(|c| c.address == state.send_address)
-            .map(|c| c.name.clone());
-        if let Some(ref name) = contact_name {
+        // Show contact or address label if the current address matches
+        let resolved_name = state
+            .contact_name(&state.send_address)
+            .map(|s| s.to_string());
+        if let Some(ref name) = resolved_name {
             ui.label(
                 egui::RichText::new(format!("Sending to: {}", name))
                     .strong()
