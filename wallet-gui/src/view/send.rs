@@ -83,30 +83,43 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         .desired_width(200.0),
                 );
             });
-
-            ui.add_space(20.0);
-
-            ui.vertical(|ui| {
-                ui.label("Fee (TIME)");
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.send_fee)
-                        .hint_text("0.001000")
-                        .desired_width(200.0),
-                );
-            });
         });
 
         ui.add_space(8.0);
 
-        // Available balance and insufficient funds check
-        let available = state.balance.confirmed;
+        // Auto-calculate tiered fee (matches masternode consensus rule)
         let send_amount = parse_time_amount(&state.send_amount);
-        let send_fee = if state.send_fee.is_empty() {
-            100_000 // default fee: 0.001 TIME
+        let available = state.balance.confirmed;
+        let auto_fee = if send_amount > 0 {
+            wallet::calculate_fee(send_amount)
         } else {
-            parse_time_amount(&state.send_fee)
+            0
         };
-        let total_cost = send_amount.saturating_add(send_fee);
+        if send_amount > 0 {
+            let fee_pct = if send_amount < 100 * 100_000_000 {
+                "1%"
+            } else if send_amount < 1_000 * 100_000_000 {
+                "0.5%"
+            } else if send_amount < 10_000 * 100_000_000 {
+                "0.25%"
+            } else {
+                "0.1%"
+            };
+            ui.label(
+                egui::RichText::new(format!(
+                    "Network fee: {}.{:06} TIME ({})",
+                    auto_fee / 100_000_000,
+                    (auto_fee % 100_000_000) / 100,
+                    fee_pct,
+                ))
+                .color(egui::Color32::GRAY),
+            );
+        }
+
+        ui.add_space(4.0);
+
+        // Available balance and insufficient funds check
+        let total_cost = send_amount.saturating_add(auto_fee);
         let insufficient = send_amount > 0 && total_cost > available;
 
         if insufficient {
@@ -177,7 +190,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                 let _ = ui_tx.send(UiEvent::SendTransaction {
                     to: state.send_address.clone(),
                     amount: send_amount,
-                    fee: send_fee,
+                    fee: auto_fee,
                 });
                 state.loading = true;
                 state.error = None;

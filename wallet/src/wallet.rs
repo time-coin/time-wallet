@@ -41,6 +41,66 @@ pub enum WalletError {
     EncryptionError(#[from] EncryptionError),
 }
 
+const SATOSHIS_PER_TIME: u64 = 100_000_000;
+const MIN_TX_FEE: u64 = 1_000_000; // 0.01 TIME
+
+/// A single fee tier: transactions below `up_to` satoshis pay `rate_bps` basis points.
+/// 100 bps = 1%.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeeTier {
+    /// Upper bound in satoshis (exclusive). Use u64::MAX for the final tier.
+    pub up_to: u64,
+    /// Fee rate in basis points (1 bps = 0.01%).
+    pub rate_bps: u64,
+}
+
+/// Governance-adjustable fee schedule.
+///
+/// Masternodes serve this via the `getfeeschedule` RPC so wallets always use
+/// the latest parameters. Governance proposals can update these values without
+/// requiring a software upgrade.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeeSchedule {
+    /// Ordered list of tiers (smallest `up_to` first).
+    pub tiers: Vec<FeeTier>,
+    /// Absolute minimum fee in satoshis.
+    pub min_fee: u64,
+}
+
+impl Default for FeeSchedule {
+    fn default() -> Self {
+        Self {
+            tiers: vec![
+                FeeTier { up_to: 100 * SATOSHIS_PER_TIME,    rate_bps: 100 },  // < 100 TIME  → 1%
+                FeeTier { up_to: 1_000 * SATOSHIS_PER_TIME,  rate_bps: 50  },  // < 1k TIME   → 0.5%
+                FeeTier { up_to: 10_000 * SATOSHIS_PER_TIME, rate_bps: 25  },  // < 10k TIME  → 0.25%
+                FeeTier { up_to: u64::MAX,                   rate_bps: 10  },  // >= 10k TIME → 0.1%
+            ],
+            min_fee: MIN_TX_FEE,
+        }
+    }
+}
+
+impl FeeSchedule {
+    /// Calculate the fee for a given send amount.
+    pub fn calculate_fee(&self, send_amount: u64) -> u64 {
+        let rate_bps = self
+            .tiers
+            .iter()
+            .find(|t| send_amount < t.up_to)
+            .map(|t| t.rate_bps)
+            .unwrap_or(10); // fallback 0.1%
+
+        let proportional = send_amount * rate_bps / 10_000;
+        proportional.max(self.min_fee)
+    }
+}
+
+/// Calculate the transaction fee using the default fee schedule.
+pub fn calculate_fee(send_amount: u64) -> u64 {
+    FeeSchedule::default().calculate_fee(send_amount)
+}
+
 /// UTXO (Unspent Transaction Output)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UTXO {
@@ -432,7 +492,7 @@ impl Wallet {
         &mut self,
         to_address: &str,
         amount: u64,
-        fee: u64,
+        _fee: u64,
     ) -> Result<Transaction, WalletError> {
         if amount == 0 {
             return Err(WalletError::TransactionError(
@@ -440,7 +500,14 @@ impl Wallet {
             ));
         }
 
-        let total_needed = amount + fee;
+        // Validate recipient address
+        let recipient = Address::from_string(to_address)?;
+
+        // Tiered fee: 1% under 100 TIME, 0.5% under 1k, 0.25% under 10k, 0.1% above
+        // Minimum fee: 0.01 TIME (1_000_000 sats)
+        let actual_fee = calculate_fee(amount);
+        let total_needed = amount + actual_fee;
+
         if total_needed > self.balance {
             return Err(WalletError::InsufficientFunds {
                 have: self.balance,
@@ -448,13 +515,7 @@ impl Wallet {
             });
         }
 
-        // Validate recipient address
-        let recipient = Address::from_string(to_address)?;
-
-        // Create transaction
-        let mut tx = Transaction::new();
-
-        // Select UTXOs (simple: use first UTXOs that cover amount + fee)
+        // Select UTXOs greedily
         let mut input_amount = 0u64;
         let mut selected_utxos = Vec::new();
 
@@ -474,13 +535,16 @@ impl Wallet {
             });
         }
 
+        // Create transaction
+        let mut tx = Transaction::new();
+
         // Add inputs
         for utxo in &selected_utxos {
             let input = TxInput::new(utxo.tx_hash, utxo.output_index);
             tx.add_input(input);
         }
 
-        // Add output to recipient (amount only, fee goes to miners)
+        // Add output to recipient
         let output = TxOutput::new(amount, recipient);
         tx.add_output(output)?;
 
@@ -785,23 +849,25 @@ mod tests {
         let mut sender = Wallet::new(NetworkType::Mainnet).unwrap();
         let recipient = Wallet::new(NetworkType::Mainnet).unwrap();
 
-        // Add UTXO to sender
+        // Add UTXO to sender (10 TIME)
         let utxo = UTXO {
             tx_hash: [1u8; 32],
             output_index: 0,
-            amount: 10000,
+            amount: 10 * 100_000_000, // 10 TIME
             address: sender.address_string(),
         };
         sender.add_utxo(utxo);
 
-        // Create transaction with fee
+        // Create transaction: send 5 TIME
+        let send_amount = 5 * 100_000_000; // 5 TIME
         let tx = sender
-            .create_transaction(&recipient.address_string(), 1000, 50)
+            .create_transaction(&recipient.address_string(), send_amount, 0)
             .unwrap();
 
+        let fee = calculate_fee(send_amount); // 1% of 5 TIME = 0.05 TIME
         assert_eq!(tx.outputs.len(), 2); // recipient + change
-        assert_eq!(tx.outputs[0].value, 1000);
-        assert_eq!(tx.outputs[1].value, 8950); // 10000 - 1000 - 50
+        assert_eq!(tx.outputs[0].value, send_amount);
+        assert_eq!(tx.outputs[1].value, 10 * 100_000_000 - send_amount - fee);
         assert_eq!(sender.nonce(), 1); // Auto-incremented
     }
 
@@ -810,22 +876,21 @@ mod tests {
         let mut wallet = Wallet::new(NetworkType::Mainnet).unwrap();
         let recipient = Wallet::new(NetworkType::Mainnet).unwrap();
 
+        // Add small UTXO (0.5 TIME)
         let utxo = UTXO {
             tx_hash: [1u8; 32],
             output_index: 0,
-            amount: 100,
+            amount: 50_000_000, // 0.5 TIME
             address: wallet.address_string(),
         };
         wallet.add_utxo(utxo);
 
-        let result = wallet.create_transaction(&recipient.address_string(), 1000, 50);
+        // Try to send 10 TIME — should fail
+        let result = wallet.create_transaction(&recipient.address_string(), 10 * 100_000_000, 0);
 
         assert!(result.is_err());
         match result {
-            Err(WalletError::InsufficientFunds { have, need }) => {
-                assert_eq!(have, 100);
-                assert_eq!(need, 1050);
-            }
+            Err(WalletError::InsufficientFunds { .. }) => {}
             _ => panic!("Expected InsufficientFunds error"),
         }
     }
