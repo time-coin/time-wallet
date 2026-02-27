@@ -295,35 +295,43 @@ pub async fn run(
 
                                 match wm.create_transaction(&to, amount, fee) {
                                     Ok(tx) => {
-                                        let tx_hex = serde_json::to_string(&tx).unwrap_or_default();
-                                        match client.broadcast_transaction(&tx_hex).await {
-                                            Ok(txid) => {
-                                                let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid: txid.clone() });
-                                                // Inject sent tx into the list immediately
-                                                let sent_record = crate::masternode_client::TransactionRecord {
-                                                    txid: txid.clone(),
-                                                    vout: 0,
-                                                    is_send: true,
-                                                    address: to.clone(),
-                                                    amount,
-                                                    fee,
-                                                    timestamp: std::time::SystemTime::now()
-                                                        .duration_since(std::time::UNIX_EPOCH)
-                                                        .map(|d| d.as_secs() as i64)
-                                                        .unwrap_or(0),
-                                                    status: crate::masternode_client::TransactionStatus::Pending,
-                                                };
-                                                let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record));
-                                                // Refresh balance after send
-                                                if !state.addresses.is_empty() {
-                                                    if let Ok(balance) = client.get_balances(&state.addresses).await {
-                                                        let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(balance));
+                                        // Serialize to bincode bytes then hex-encode for sendrawtransaction
+                                        match tx.to_bytes() {
+                                            Ok(bytes) => {
+                                                let tx_hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                                                match client.broadcast_transaction(&tx_hex).await {
+                                                    Ok(txid) => {
+                                                        let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid: txid.clone() });
+                                                        let sent_record = crate::masternode_client::TransactionRecord {
+                                                            txid: txid.clone(),
+                                                            vout: 0,
+                                                            is_send: true,
+                                                            address: to.clone(),
+                                                            amount,
+                                                            fee,
+                                                            timestamp: std::time::SystemTime::now()
+                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                .map(|d| d.as_secs() as i64)
+                                                                .unwrap_or(0),
+                                                            status: crate::masternode_client::TransactionStatus::Pending,
+                                                        };
+                                                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record));
+                                                        if !state.addresses.is_empty() {
+                                                            if let Ok(balance) = client.get_balances(&state.addresses).await {
+                                                                let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(balance));
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = state.svc_tx.send(ServiceEvent::Error(
+                                                            format!("Broadcast failed: {}", e),
+                                                        ));
                                                     }
                                                 }
                                             }
                                             Err(e) => {
                                                 let _ = state.svc_tx.send(ServiceEvent::Error(
-                                                    format!("Broadcast failed: {}", e),
+                                                    format!("Failed to serialize transaction: {}", e),
                                                 ));
                                             }
                                         }
