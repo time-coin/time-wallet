@@ -292,30 +292,28 @@ pub async fn run(
 
                                 match wm.create_transaction(&to, amount, fee) {
                                     Ok(mut tx) => {
-                                        // Re-sign inputs with correct HD keypairs.
-                                        // create_transaction signs all inputs with the index-0 key,
-                                        // but UTXOs may belong to different HD-derived addresses.
+                                        // Re-sign ALL inputs with correct BIP-44 HD keypairs.
+                                        // create_transaction signs with Wallet.keypair which uses
+                                        // m/44'/0'/0' (account-level), but addresses are derived at
+                                        // m/44'/0'/0'/0/index (full BIP-44). We must re-sign every input.
                                         let addr_to_index: std::collections::HashMap<String, u32> =
                                             (0..wm.get_address_count())
                                                 .filter_map(|i| wm.derive_address(i).ok().map(|a| (a, i)))
                                                 .collect();
 
-                                        // Collect which inputs need re-signing
                                         let mut resignings: Vec<(usize, u32)> = Vec::new();
                                         for (input_idx, input) in tx.inputs.iter().enumerate() {
                                             let input_txid: String = input.previous_output.txid.iter().map(|b| format!("{:02x}", b)).collect();
                                             let input_vout = input.previous_output.vout;
                                             if let Some(utxo) = all_utxos.iter().find(|u| u.txid == input_txid && u.vout == input_vout) {
                                                 if let Some(&hd_index) = addr_to_index.get(&utxo.address) {
-                                                    if hd_index != 0 {
-                                                        resignings.push((input_idx, hd_index));
-                                                    }
+                                                    resignings.push((input_idx, hd_index));
                                                 }
                                             }
                                         }
                                         for (input_idx, hd_index) in resignings {
                                             if let Ok(kp) = wm.derive_keypair(hd_index) {
-                                                log::info!("Re-signing input {} with HD key index {}", input_idx, hd_index);
+                                                log::info!("Signing input {} with HD key index {}", input_idx, hd_index);
                                                 let _ = tx.sign(&kp, input_idx);
                                             }
                                         }
