@@ -27,6 +27,13 @@ pub struct AddressInfo {
     pub label: String,
 }
 
+/// External contact for the send address book.
+#[derive(Debug, Clone)]
+pub struct ContactInfo {
+    pub name: String,
+    pub address: String,
+}
+
 /// All application state needed for rendering.
 #[derive(Debug)]
 pub struct AppState {
@@ -44,6 +51,7 @@ pub struct AppState {
 
     // -- Transactions --
     pub transactions: Vec<TransactionRecord>,
+    pub selected_transaction: Option<usize>,
 
     // -- UTXOs --
     pub utxos: Vec<Utxo>,
@@ -60,6 +68,13 @@ pub struct AppState {
     pub send_address: String,
     pub send_amount: String,
     pub send_fee: String,
+    pub contacts: Vec<ContactInfo>,
+    pub new_contact_name: String,
+    pub new_contact_address: String,
+    pub show_add_contact: bool,
+    pub contact_search: String,
+    pub editing_contact_address: Option<String>,
+    pub editing_contact_name: String,
     pub password_required: bool,
     pub password_input: String,
     pub show_password: bool,
@@ -85,6 +100,7 @@ impl Default for AppState {
                 total: 0,
             },
             transactions: Vec::new(),
+            selected_transaction: None,
             utxos: Vec::new(),
             health: None,
             ws_connected: false,
@@ -93,6 +109,13 @@ impl Default for AppState {
             send_address: String::new(),
             send_amount: String::new(),
             send_fee: String::new(),
+            contacts: Vec::new(),
+            new_contact_name: String::new(),
+            new_contact_address: String::new(),
+            show_add_contact: false,
+            contact_search: String::new(),
+            editing_contact_address: None,
+            editing_contact_name: String::new(),
             password_required: false,
             password_input: String::new(),
             show_password: false,
@@ -139,21 +162,30 @@ impl AppState {
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
-                // Merge: keep WS-injected pending/finalized txs not yet in RPC results
+                // Merge: keep WS-injected pending txs not yet in RPC results
                 let pending_ws: Vec<_> = self
                     .transactions
                     .iter()
-                    .filter(|t| {
-                        matches!(
-                            t.status,
-                            TransactionStatus::Pending | TransactionStatus::Finalized
-                        )
-                    })
+                    .filter(|t| matches!(t.status, TransactionStatus::Pending))
                     .filter(|t| !txs.iter().any(|rpc_tx| rpc_tx.txid == t.txid))
                     .cloned()
                     .collect();
+                // Preserve Approved status: if a tx was already Approved (via WS finality),
+                // don't let a poll result downgrade it back to Pending
+                let approved_txids: std::collections::HashSet<String> = self
+                    .transactions
+                    .iter()
+                    .filter(|t| matches!(t.status, TransactionStatus::Approved))
+                    .map(|t| t.txid.clone())
+                    .collect();
                 self.transactions = txs;
-                // Prepend pending WS txs that haven't appeared in RPC yet
+                for tx in &mut self.transactions {
+                    if matches!(tx.status, TransactionStatus::Pending)
+                        && approved_txids.contains(&tx.txid)
+                    {
+                        tx.status = TransactionStatus::Approved;
+                    }
+                }
                 for tx in pending_ws.into_iter().rev() {
                     self.transactions.insert(0, tx);
                 }
@@ -186,21 +218,20 @@ impl AppState {
                 }
             }
 
-            ServiceEvent::TransactionFinalityUpdated {
-                txid,
-                finalized,
-                confirmations,
-            } => {
+            ServiceEvent::TransactionFinalityUpdated { txid, finalized } => {
                 if let Some(tx) = self.transactions.iter_mut().find(|t| t.txid == txid) {
                     if finalized {
-                        tx.status = TransactionStatus::Finalized;
+                        tx.status = TransactionStatus::Approved;
                     }
-                    tx.confirmations = confirmations;
                 }
             }
 
             ServiceEvent::HealthUpdated(health) => {
                 self.health = Some(health);
+            }
+
+            ServiceEvent::ContactsUpdated(contacts) => {
+                self.contacts = contacts;
             }
 
             ServiceEvent::WsConnected => {
@@ -286,10 +317,12 @@ mod tests {
 
     #[test]
     fn test_apply_transaction_sent_clears_form() {
-        let mut state = AppState::default();
-        state.send_address = "TIME0xyz".to_string();
-        state.send_amount = "100".to_string();
-        state.loading = true;
+        let mut state = AppState {
+            send_address: "TIME0xyz".to_string(),
+            send_amount: "100".to_string(),
+            loading: true,
+            ..Default::default()
+        };
         state.apply(ServiceEvent::TransactionSent {
             txid: "abc123".to_string(),
         });
@@ -301,8 +334,10 @@ mod tests {
 
     #[test]
     fn test_apply_error() {
-        let mut state = AppState::default();
-        state.loading = true;
+        let mut state = AppState {
+            loading: true,
+            ..Default::default()
+        };
         state.apply(ServiceEvent::Error("connection failed".to_string()));
         assert!(!state.loading);
         assert_eq!(state.error.as_deref(), Some("connection failed"));

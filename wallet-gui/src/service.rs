@@ -84,9 +84,6 @@ pub async fn run(
     data_poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     data_poll_interval.tick().await;
 
-    // Channel for receiving finality check results from spawned tasks
-    let (finality_tx, mut finality_rx) = mpsc::unbounded_channel::<(String, bool, u32)>();
-
     log::info!("🚀 Service loop started ({})", state.config.network);
 
     loop {
@@ -245,7 +242,28 @@ pub async fn run(
                                         let tx_hex = serde_json::to_string(&tx).unwrap_or_default();
                                         match client.broadcast_transaction(&tx_hex).await {
                                             Ok(txid) => {
-                                                let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid });
+                                                let _ = state.svc_tx.send(ServiceEvent::TransactionSent { txid: txid.clone() });
+                                                // Inject sent tx into the list immediately
+                                                let sent_record = crate::masternode_client::TransactionRecord {
+                                                    txid: txid.clone(),
+                                                    vout: 0,
+                                                    is_send: true,
+                                                    address: to.clone(),
+                                                    amount,
+                                                    fee,
+                                                    timestamp: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .map(|d| d.as_secs() as i64)
+                                                        .unwrap_or(0),
+                                                    status: crate::masternode_client::TransactionStatus::Pending,
+                                                };
+                                                let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record));
+                                                // Refresh balance after send
+                                                if !state.addresses.is_empty() {
+                                                    if let Ok(balance) = client.get_balances(&state.addresses).await {
+                                                        let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(balance));
+                                                    }
+                                                }
                                             }
                                             Err(e) => {
                                                 let _ = state.svc_tx.send(ServiceEvent::Error(
@@ -386,6 +404,56 @@ pub async fn run(
                             ));
                         }
                     }
+
+                    UiEvent::SaveContact { name, address } => {
+                        if let Some(ref db) = state.wallet_db {
+                            let contact = crate::wallet_db::AddressContact {
+                                address: address.clone(),
+                                label: name.clone(),
+                                name: Some(name),
+                                email: None,
+                                phone: None,
+                                notes: None,
+                                is_default: false,
+                                is_owned: false,
+                                derivation_index: None,
+                                created_at: chrono::Utc::now().timestamp(),
+                                updated_at: chrono::Utc::now().timestamp(),
+                            };
+                            if let Err(e) = db.save_contact(&contact) {
+                                log::warn!("Failed to save contact: {}", e);
+                            }
+                            // Reload contacts list
+                            if let Ok(contacts) = db.get_external_contacts() {
+                                let infos: Vec<crate::state::ContactInfo> = contacts
+                                    .into_iter()
+                                    .map(|c| crate::state::ContactInfo {
+                                        name: c.name.unwrap_or(c.label),
+                                        address: c.address,
+                                    })
+                                    .collect();
+                                let _ = state.svc_tx.send(ServiceEvent::ContactsUpdated(infos));
+                            }
+                        }
+                    }
+
+                    UiEvent::DeleteContact { address } => {
+                        if let Some(ref db) = state.wallet_db {
+                            if let Err(e) = db.delete_contact(&address) {
+                                log::warn!("Failed to delete contact: {}", e);
+                            }
+                            if let Ok(contacts) = db.get_external_contacts() {
+                                let infos: Vec<crate::state::ContactInfo> = contacts
+                                    .into_iter()
+                                    .map(|c| crate::state::ContactInfo {
+                                        name: c.name.unwrap_or(c.label),
+                                        address: c.address,
+                                    })
+                                    .collect();
+                                let _ = state.svc_tx.send(ServiceEvent::ContactsUpdated(infos));
+                            }
+                        }
+                    }
                 }
             }
 
@@ -395,38 +463,50 @@ pub async fn run(
                         // Immediately inject as a TransactionRecord for instant display
                         let tx_record = TransactionRecord {
                             txid: notification.txid.clone(),
-                            from: vec![],
-                            to: vec![notification.address.clone()],
+                            vout: 0,
+                            is_send: false,
+                            address: notification.address.clone(),
                             amount: (notification.amount * 100_000_000.0) as u64,
                             fee: 0,
                             timestamp: notification.timestamp,
-                            confirmations: 0,
                             status: TransactionStatus::Pending,
                         };
                         let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
                         let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification.clone()));
 
-                        // Spawn finality polling task
+                        // Refresh balance immediately
                         if let Some(ref client) = state.client {
-                            let ftx = finality_tx.clone();
-                            let fc = client.clone();
-                            let txid = notification.txid.clone();
-                            tokio::spawn(async move {
-                                // Poll for finality every 500ms for up to 15 seconds
-                                for _ in 0..30 {
-                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                    match fc.get_transaction_finality(&txid).await {
-                                        Ok(status) if status.finalized => {
-                                            let _ = ftx.send((txid, true, status.confirmations));
-                                            return;
-                                        }
-                                        _ => {}
-                                    }
+                            if !state.addresses.is_empty() {
+                                if let Ok(bal) = client.get_balances(&state.addresses).await {
+                                    let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
                                 }
-                            });
+                            }
                         }
+                    }
+                    WsEvent::UtxoFinalized(notif) => {
+                        // UTXO finalized by masternode consensus — mark tx as Approved
+                        log::info!("✅ UTXO finalized: txid={}... vout={} amount={}", &notif.txid[..16.min(notif.txid.len())], notif.output_index, notif.amount);
 
-                        // Also refresh balance immediately
+                        // Insert transaction record if it doesn't exist yet
+                        // (finality event may arrive before the RPC poll adds it)
+                        let tx_record = TransactionRecord {
+                            txid: notif.txid.clone(),
+                            vout: notif.output_index,
+                            is_send: false,
+                            address: notif.address.clone(),
+                            amount: (notif.amount * 100_000_000.0) as u64,
+                            fee: 0,
+                            timestamp: chrono::Utc::now().timestamp(),
+                            status: TransactionStatus::Approved,
+                        };
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
+
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionFinalityUpdated {
+                            txid: notif.txid,
+                            finalized: true,
+                        });
+
+                        // Refresh balance after finalization
                         if let Some(ref client) = state.client {
                             if !state.addresses.is_empty() {
                                 if let Ok(bal) = client.get_balances(&state.addresses).await {
@@ -442,16 +522,6 @@ pub async fn run(
                         let _ = state.svc_tx.send(ServiceEvent::WsDisconnected);
                     }
                 }
-            }
-
-            // Finality check results from spawned polling tasks
-            Some((txid, finalized, confirmations)) = finality_rx.recv() => {
-                log::info!("Finality update: {} finalized={} conf={}", &txid[..16.min(txid.len())], finalized, confirmations);
-                let _ = state.svc_tx.send(ServiceEvent::TransactionFinalityUpdated {
-                    txid,
-                    finalized,
-                    confirmations,
-                });
             }
         }
     }
@@ -657,6 +727,17 @@ impl ServiceState {
                             log::info!("Loaded {} cached transactions from database", txs.len());
                             let _ = self.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
                         }
+                    }
+                    // Load external contacts for send address book
+                    if let Ok(contacts) = db.get_external_contacts() {
+                        let infos: Vec<crate::state::ContactInfo> = contacts
+                            .into_iter()
+                            .map(|c| crate::state::ContactInfo {
+                                name: c.name.unwrap_or(c.label),
+                                address: c.address,
+                            })
+                            .collect();
+                        let _ = self.svc_tx.send(ServiceEvent::ContactsUpdated(infos));
                     }
                 }
 

@@ -231,32 +231,33 @@ impl MasternodeClient {
                 let amount = (amount_time.abs() * 100_000_000.0) as u64;
                 let fee_time = tx.get("fee").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let fee = (fee_time.abs() * 100_000_000.0) as u64;
-                let confirmations = tx
-                    .get("confirmations")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                let in_block = tx.get("blockhash").and_then(|v| v.as_str()).is_some();
                 let timestamp = tx.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
 
-                let status = if confirmations >= 6 {
-                    TransactionStatus::Confirmed
+                // Instant finality: check finalized flag from consensus, then blockhash
+                let finalized = tx.get("finalized").and_then(|v| v.as_bool()).unwrap_or(false);
+                let status = if in_block || finalized {
+                    TransactionStatus::Approved
                 } else {
                     TransactionStatus::Pending
                 };
 
-                let (from, to) = match category {
-                    "send" => (vec!["self".to_string()], vec![txid.clone()]),
-                    "receive" => (vec![txid.clone()], vec!["self".to_string()]),
-                    _ => (vec![], vec![]),
-                };
+                let vout = tx.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let is_send = category == "send";
+                let address = tx
+                    .get("address")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
 
                 Some(TransactionRecord {
                     txid,
-                    from,
-                    to,
+                    vout,
+                    is_send,
+                    address,
                     amount,
                     fee,
                     timestamp,
-                    confirmations,
                     status,
                 })
             })
@@ -436,22 +437,24 @@ pub struct Balance {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionRecord {
     pub txid: String,
-    pub from: Vec<String>,
-    pub to: Vec<String>,
+    pub vout: u32,
+    pub is_send: bool,
+    pub address: String,
     pub amount: u64,
     pub fee: u64,
     pub timestamp: i64,
-    pub confirmations: u32,
     pub status: TransactionStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransactionStatus {
+    /// In the mempool but not yet in a block.
     Pending,
-    Finalized,
-    Confirmed,
-    Failed,
+    /// Included in a block — instant finality means this is final.
+    Approved,
+    /// Transaction was rejected or conflicted.
+    Declined,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -563,8 +566,8 @@ mod tests {
 
     #[test]
     fn test_transaction_status() {
-        let status = TransactionStatus::Confirmed;
+        let status = TransactionStatus::Approved;
         let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(json, r#""confirmed""#);
+        assert_eq!(json, r#""approved""#);
     }
 }

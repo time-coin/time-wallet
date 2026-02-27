@@ -120,7 +120,7 @@ impl eframe::App for App {
                 view::welcome::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Overview => {
-                view::overview::show(ui, &self.state, &self.ui_tx);
+                view::overview::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Send => {
                 view::send::show(ui, &mut self.state, &self.ui_tx);
@@ -129,7 +129,7 @@ impl eframe::App for App {
                 view::receive::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Transactions => {
-                view::transactions::show(ui, &self.state, &self.ui_tx);
+                view::transactions::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Settings => {
                 view::settings::show(ui, &self.state);
@@ -138,7 +138,7 @@ impl eframe::App for App {
                 view::connections::show(ui, &self.state);
             }
             Screen::Utxos => {
-                view::overview::show(ui, &self.state, &self.ui_tx);
+                view::overview::show(ui, &mut self.state, &self.ui_tx);
             }
         });
     }

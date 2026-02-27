@@ -53,6 +53,12 @@ pub enum UiEvent {
     /// Generate a new receive address from the HD wallet.
     GenerateAddress,
 
+    /// Save an external contact (send address book).
+    SaveContact { name: String, address: String },
+
+    /// Delete an external contact.
+    DeleteContact { address: String },
+
     /// Clean shutdown.
     Shutdown,
 }
@@ -114,7 +120,6 @@ pub enum ServiceEvent {
     TransactionFinalityUpdated {
         txid: String,
         finalized: bool,
-        confirmations: u32,
     },
 
     /// Masternode health status.
@@ -134,6 +139,9 @@ pub enum ServiceEvent {
 
     /// A new address was generated.
     AddressGenerated(AddressInfo),
+
+    /// External contacts list updated.
+    ContactsUpdated(Vec<crate::state::ContactInfo>),
 
     /// Peer discovery results with health/ping info.
     PeersDiscovered(Vec<crate::state::PeerInfo>),

@@ -20,6 +20,17 @@ pub struct TxNotification {
     pub confirmations: u32,
 }
 
+/// Notification that a UTXO has been finalized by masternode consensus
+#[derive(Clone, Debug, Deserialize)]
+pub struct UtxoFinalizedNotification {
+    pub txid: String,
+    pub output_index: u32,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub amount: f64,
+}
+
 /// Server message envelope
 #[derive(Deserialize, Debug)]
 struct ServerMessage {
@@ -41,6 +52,8 @@ struct ClientMessage {
 pub enum WsEvent {
     /// A new transaction was detected for our address
     TransactionReceived(TxNotification),
+    /// A UTXO has been finalized (locked by masternode consensus)
+    UtxoFinalized(UtxoFinalizedNotification),
     /// WebSocket connected successfully
     Connected(String),
     /// WebSocket disconnected
@@ -208,6 +221,23 @@ impl WsClient {
                             }
                             Err(e) => {
                                 log::warn!("Failed to parse tx_notification: {}", e);
+                            }
+                        }
+                    }
+                }
+                "utxo_finalized" => {
+                    if let Some(data) = msg.data {
+                        match serde_json::from_value::<UtxoFinalizedNotification>(data) {
+                            Ok(notif) => {
+                                log::info!(
+                                    "✅ UTXO finalized! txid: {}... vout: {}",
+                                    &notif.txid[..std::cmp::min(16, notif.txid.len())],
+                                    notif.output_index
+                                );
+                                let _ = event_tx.send(WsEvent::UtxoFinalized(notif));
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to parse utxo_finalized: {}", e);
                             }
                         }
                     }

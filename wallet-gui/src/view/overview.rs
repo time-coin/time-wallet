@@ -3,12 +3,12 @@
 use egui::Ui;
 use tokio::sync::mpsc;
 
-use crate::events::UiEvent;
+use crate::events::{Screen, UiEvent};
 use crate::masternode_client::TransactionStatus;
 use crate::state::AppState;
 
 /// Render the overview screen.
-pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
+pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
     ui.horizontal(|ui| {
         ui.heading("Overview");
         ui.add_space(10.0);
@@ -68,7 +68,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                 if state.balance.pending > 0 {
                     ui.label(
                         egui::RichText::new(format!("Pending: {:.6}", pending))
-                            .color(egui::Color32::YELLOW),
+                            .color(egui::Color32::from_rgb(255, 165, 0)),
                     );
                 }
             });
@@ -113,55 +113,86 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                 .italics(),
         );
     } else {
+        let mut clicked_idx = None;
         egui::ScrollArea::vertical()
             .max_height(400.0)
             .show(ui, |ui| {
-                for tx in state.transactions.iter().take(20) {
-                    ui.group(|ui| {
-                        ui.set_min_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let amount_time = tx.amount as f64 / 100_000_000.0;
-                            let short_txid = if tx.txid.len() > 16 {
-                                format!("{}..", &tx.txid[..16])
-                            } else {
-                                tx.txid.clone()
-                            };
+                for (i, tx) in state.transactions.iter().take(20).enumerate() {
+                    let resp = ui
+                        .group(|ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                // Send/receive icon
+                                let (dir_icon, amount_color) = if tx.is_send {
+                                    ("Sent", egui::Color32::from_rgb(255, 80, 80))
+                                } else {
+                                    ("Received", egui::Color32::from_rgb(80, 200, 80))
+                                };
+                                ui.label(egui::RichText::new(dir_icon).color(amount_color));
 
-                            ui.label(
-                                egui::RichText::new(format!("{:.6} TIME", amount_time)).strong(),
-                            );
-                            ui.add_space(10.0);
-                            ui.label(
-                                egui::RichText::new(short_txid)
-                                    .color(egui::Color32::GRAY)
-                                    .monospace(),
-                            );
+                                ui.add_space(8.0);
 
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let (status_label, color) = match tx.status {
-                                        TransactionStatus::Finalized => {
-                                            ("Finalized".to_string(), egui::Color32::GREEN)
+                                // Amount colored by direction
+                                let amount = tx.amount as f64 / 100_000_000.0;
+                                let sign = if tx.is_send { "-" } else { "+" };
+                                ui.label(
+                                    egui::RichText::new(format!("{}{:.6} TIME", sign, amount))
+                                        .strong()
+                                        .color(amount_color),
+                                );
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        // Status
+                                        let (status_text, status_color) = match tx.status {
+                                            TransactionStatus::Approved => {
+                                                ("Approved", egui::Color32::GREEN)
+                                            }
+                                            TransactionStatus::Pending => {
+                                                ("Pending", egui::Color32::from_rgb(255, 165, 0))
+                                            }
+                                            TransactionStatus::Declined => {
+                                                ("Declined", egui::Color32::RED)
+                                            }
+                                        };
+                                        ui.label(
+                                            egui::RichText::new(status_text).color(status_color),
+                                        );
+
+                                        ui.add_space(12.0);
+
+                                        // Date
+                                        if tx.timestamp > 0 {
+                                            if let Some(dt) =
+                                                chrono::DateTime::from_timestamp(tx.timestamp, 0)
+                                            {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        dt.format("%Y-%m-%d %H:%M").to_string(),
+                                                    )
+                                                    .color(egui::Color32::GRAY),
+                                                );
+                                            }
                                         }
-                                        TransactionStatus::Confirmed => (
-                                            format!("{} conf", tx.confirmations),
-                                            egui::Color32::GREEN,
-                                        ),
-                                        TransactionStatus::Pending => {
-                                            ("Pending".to_string(), egui::Color32::YELLOW)
-                                        }
-                                        TransactionStatus::Failed => {
-                                            ("Failed".to_string(), egui::Color32::RED)
-                                        }
-                                    };
-                                    ui.label(egui::RichText::new(status_label).color(color));
-                                },
-                            );
-                        });
-                    });
+                                    },
+                                );
+                            });
+                        })
+                        .response;
+
+                    if resp.interact(egui::Sense::click()).clicked() {
+                        clicked_idx = Some(i);
+                    }
                 }
             });
+
+        // Navigate to transaction detail
+        if let Some(idx) = clicked_idx {
+            state.selected_transaction = Some(idx);
+            state.screen = Screen::Transactions;
+            let _ = ui_tx.send(UiEvent::NavigatedTo(Screen::Transactions));
+        }
     }
 
     // Status messages

@@ -277,14 +277,18 @@ mod tests {
 
     #[test]
     fn test_ws_url_derived() {
-        let mut config = Config::default();
-        config.active_endpoint = Some("https://example.com:24001".to_string());
-        config.ws_endpoint = None;
+        let config = Config {
+            active_endpoint: Some("https://example.com:24001".to_string()),
+            ws_endpoint: None,
+            ..Default::default()
+        };
         assert_eq!(config.ws_url(), "wss://example.com:24002");
 
-        let mut config2 = Config::default();
-        config2.active_endpoint = Some("http://127.0.0.1:24101".to_string());
-        config2.ws_endpoint = None;
+        let config2 = Config {
+            active_endpoint: Some("http://127.0.0.1:24101".to_string()),
+            ws_endpoint: None,
+            ..Default::default()
+        };
         assert_eq!(config2.ws_url(), "ws://127.0.0.1:24102");
     }
 
