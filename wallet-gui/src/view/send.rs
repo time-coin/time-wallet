@@ -337,6 +337,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                 if state.editing_contact_address.as_deref() == Some(addr.as_str()) {
                     state.editing_contact_address = None;
                 }
+                // Clear send form if the deleted contact was selected
+                if state.send_address == addr {
+                    state.send_address.clear();
+                }
                 let _ = ui_tx.send(UiEvent::DeleteContact { address: addr });
             }
             if let Some((name, address)) = save_edit {
