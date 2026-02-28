@@ -4,7 +4,7 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](https://github.com/time-coin/time-coin/blob/main/LICENSE)
 
 A cross-platform GUI wallet for the TIME Coin network. Built with Rust and [egui](https://github.com/emilk/egui).
-If you are looking for the masternode repository go to [TimeCoin](https://github.com/time-coin/timecoin.git)
+If you are looking for the masternode repository go to [time-masternode](https://github.com/time-coin/time-masternode.git)
 
 ## Features
 
