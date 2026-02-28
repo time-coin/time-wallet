@@ -203,14 +203,16 @@ impl WalletDat {
     }
 
     /// Derive an address at the given index
-    /// Uses BIP-44 private key derivation → Ed25519 keypair → address
-    /// This ensures the address matches the signing key in script_sig.
+    /// Uses proper BIP-44 derivation: m/44'/0'/0'/0/index
     pub fn derive_address(&self, index: u32) -> Result<String, WalletDatError> {
-        let keypair = self.derive_keypair(index)?;
-        let public_key = keypair.public_key_bytes();
-        let address = wallet::Address::from_public_key(&public_key, self.network)
+        // ✅ FIXED: Use xpub_to_address for proper BIP-44 derivation
+        // This matches what the masternode uses for address scanning
+        use wallet::xpub_to_address;
+
+        let address = xpub_to_address(&self.xpub, 0, index, self.network)
             .map_err(|e| WalletDatError::SerializationError(e.to_string()))?;
-        Ok(address.to_string())
+
+        Ok(address)
     }
 
     /// Get the xpub for this wallet
