@@ -1,7 +1,4 @@
-use k256::ecdsa::{
-    signature::{Signer, Verifier},
-    Signature, SigningKey, VerifyingKey,
-};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -54,20 +51,18 @@ mod signing_key_serde {
         }
         let mut key_bytes = [0u8; 32];
         key_bytes.copy_from_slice(&bytes);
-        SigningKey::from_bytes((&key_bytes).into())
-            .map_err(|_| serde::de::Error::custom("Invalid signing key"))
+        Ok(SigningKey::from_bytes(&key_bytes))
     }
 }
 
 impl Keypair {
     pub fn generate() -> Result<Self, KeypairError> {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut OsRng);
         Ok(Keypair { signing_key })
     }
 
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, KeypairError> {
-        let signing_key =
-            SigningKey::from_bytes(bytes.into()).map_err(|_| KeypairError::GenerationError)?;
+        let signing_key = SigningKey::from_bytes(bytes);
         Ok(Keypair { signing_key })
     }
 
@@ -91,7 +86,7 @@ impl Keypair {
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.signing_key.to_bytes().into()
+        self.signing_key.to_bytes()
     }
 
     pub fn secret_key_bytes(&self) -> [u8; 32] {
@@ -103,12 +98,12 @@ impl Keypair {
     }
 
     pub fn public_key(&self) -> VerifyingKey {
-        *self.signing_key.verifying_key()
+        self.signing_key.verifying_key()
     }
 
-    /// Returns the 33-byte SEC1 compressed public key
+    /// Returns the 32-byte Ed25519 public key
     pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.public_key().to_encoded_point(true).as_bytes().to_vec()
+        self.public_key().to_bytes().to_vec()
     }
 
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
@@ -120,7 +115,8 @@ impl Keypair {
         if signature.len() != 64 {
             return Err(KeypairError::SignatureError);
         }
-        let sig = Signature::from_slice(signature).map_err(|_| KeypairError::SignatureError)?;
+        let sig_bytes: [u8; 64] = signature.try_into().unwrap();
+        let sig = Signature::from_bytes(&sig_bytes);
         self.public_key()
             .verify(message, &sig)
             .map_err(|_| KeypairError::VerificationError)
@@ -140,16 +136,18 @@ pub fn verify_signature(
     message: &[u8],
     signature: &[u8],
 ) -> Result<(), KeypairError> {
-    if public_key.len() != 33 {
+    if public_key.len() != 32 {
         return Err(KeypairError::VerificationError);
     }
     if signature.len() != 64 {
         return Err(KeypairError::SignatureError);
     }
 
+    let pk_bytes: [u8; 32] = public_key.try_into().unwrap();
     let verifying_key =
-        VerifyingKey::from_sec1_bytes(public_key).map_err(|_| KeypairError::VerificationError)?;
-    let sig = Signature::from_slice(signature).map_err(|_| KeypairError::SignatureError)?;
+        VerifyingKey::from_bytes(&pk_bytes).map_err(|_| KeypairError::VerificationError)?;
+    let sig_bytes: [u8; 64] = signature.try_into().unwrap();
+    let sig = Signature::from_bytes(&sig_bytes);
 
     verifying_key
         .verify(message, &sig)

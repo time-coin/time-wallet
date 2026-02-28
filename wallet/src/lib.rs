@@ -34,8 +34,8 @@ pub use encryption::{EncryptedWallet, EncryptionError, SecurePassword, WalletEnc
 pub use keypair::{Keypair, KeypairError};
 pub use metadata_db::{MetadataDb, MetadataDbError};
 pub use mnemonic::{
-    generate_mnemonic, mnemonic_to_keypair, mnemonic_to_keypair_bip44, mnemonic_to_xpub,
-    validate_mnemonic, xpub_to_address, MnemonicError, MnemonicPhrase,
+    generate_mnemonic, mnemonic_to_address, mnemonic_to_keypair, mnemonic_to_keypair_bip44,
+    validate_mnemonic, MnemonicError, MnemonicPhrase,
 };
 pub use pin::{PinAuth, PinConfig, PinError, SecurePin, StoredPin};
 pub use transaction::{OutPoint, Transaction, TransactionError, TxInput, TxOutput};

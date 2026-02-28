@@ -4,8 +4,8 @@
 //! for the thin-client architecture.
 //!
 //! The wallet uses deterministic address derivation:
-//! - time-wallet.dat stores ONLY: xpub, encrypted mnemonic, master key
-//! - Addresses are derived on-demand from xpub
+//! - time-wallet.dat stores: encrypted mnemonic, master key
+//! - Addresses are derived on-demand via SLIP-0010 from the mnemonic
 //! - All blockchain state is queried from masternodes via JSON-RPC
 
 use crate::wallet_dat::{WalletDat, WalletDatError};
@@ -44,10 +44,10 @@ impl WalletManager {
         // Create wallet from mnemonic
         let wallet = Wallet::from_mnemonic(mnemonic, "", network)?;
 
-        // Create wallet_dat from mnemonic (stores xpub, encrypted mnemonic, master key)
+        // Create wallet_dat from mnemonic (stores encrypted mnemonic, master key)
         let wallet_dat = WalletDat::from_mnemonic(mnemonic, network)?;
 
-        log::info!("Created wallet with xpub: {}", wallet_dat.get_xpub());
+        log::info!("Created wallet with SLIP-0010 derivation");
 
         // Save immediately
         wallet_dat.save()?;
@@ -85,10 +85,7 @@ impl WalletManager {
         // Create encrypted wallet_dat from mnemonic with password
         let wallet_dat = WalletDat::from_mnemonic_encrypted(mnemonic, network, password)?;
 
-        log::info!(
-            "Created encrypted wallet with xpub: {}",
-            wallet_dat.get_xpub()
-        );
+        log::info!("Created encrypted wallet with SLIP-0010 derivation");
 
         // Save immediately
         wallet_dat.save()?;
@@ -188,10 +185,10 @@ impl WalletManager {
         // Create wallet from mnemonic
         let wallet = Wallet::from_mnemonic(mnemonic, "", network)?;
 
-        // Create wallet_dat from mnemonic (stores xpub, encrypted mnemonic, master key)
+        // Create wallet_dat from mnemonic (stores encrypted mnemonic, master key)
         let wallet_dat = WalletDat::from_mnemonic(mnemonic, network)?;
 
-        log::info!("Replaced wallet with new xpub: {}", wallet_dat.get_xpub());
+        log::info!("Replaced wallet with new SLIP-0010 derivation");
 
         // Save (atomic write with temp file)
         wallet_dat.save()?;
@@ -201,11 +198,6 @@ impl WalletManager {
             active_wallet: wallet,
             next_address_index: 0,
         })
-    }
-
-    /// Get the xpub for this wallet
-    pub fn get_xpub(&self) -> &str {
-        self.wallet_dat.get_xpub()
     }
 
     /// Derive an address at the given index
@@ -331,7 +323,6 @@ mod tests {
             next_address_index: 0,
         };
 
-        assert!(!manager.get_xpub().is_empty());
         assert_eq!(manager.get_balance(), 0);
 
         // Can derive addresses

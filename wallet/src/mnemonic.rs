@@ -1,13 +1,16 @@
-//! BIP-39 Mnemonic implementation for TIME Coin wallet
+//! BIP-39 Mnemonic + SLIP-0010 HD key derivation for TIME Coin wallet
 //!
-//! This module provides industry-standard mnemonic phrase support for
-//! deterministic key generation and wallet recovery.
+//! Uses SLIP-0010 (Ed25519) for hierarchical deterministic key derivation.
+//! All derivation levels are hardened (Ed25519 requirement).
+//! BIP-44 path: m/44'/coin_type'/account'/change'/index'
 
 use crate::keypair::{Keypair, KeypairError};
-use bip32::{DerivationPath, XPrv};
 use bip39::{Language, Mnemonic};
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
+
+type HmacSha512 = Hmac<Sha512>;
 
 #[derive(Debug, Error)]
 pub enum MnemonicError {
@@ -24,84 +27,77 @@ pub enum MnemonicError {
     DerivationError(String),
 }
 
+// ── SLIP-0010 Ed25519 HD derivation ──────────────────────────────────
+
+/// Derive the SLIP-0010 master key and chain code from a BIP-39 seed.
+fn slip10_master_key(seed: &[u8]) -> ([u8; 32], [u8; 32]) {
+    let mut mac =
+        HmacSha512::new_from_slice(b"ed25519 seed").expect("HMAC can take key of any size");
+    mac.update(seed);
+    let result = mac.finalize().into_bytes();
+    let mut key = [0u8; 32];
+    let mut chain_code = [0u8; 32];
+    key.copy_from_slice(&result[..32]);
+    chain_code.copy_from_slice(&result[32..]);
+    (key, chain_code)
+}
+
+/// Derive a hardened child key using SLIP-0010.
+/// Ed25519 only supports hardened derivation; the hardened bit is set automatically.
+fn slip10_derive_child(key: &[u8; 32], chain_code: &[u8; 32], index: u32) -> ([u8; 32], [u8; 32]) {
+    let hardened = index | 0x80000000;
+    let mut mac = HmacSha512::new_from_slice(chain_code).expect("HMAC can take key of any size");
+    mac.update(&[0x00]);
+    mac.update(key);
+    mac.update(&hardened.to_be_bytes());
+    let result = mac.finalize().into_bytes();
+    let mut child_key = [0u8; 32];
+    let mut child_cc = [0u8; 32];
+    child_key.copy_from_slice(&result[..32]);
+    child_cc.copy_from_slice(&result[32..]);
+    (child_key, child_cc)
+}
+
+/// Derive a keypair at the full SLIP-0010 / BIP-44 path.
+/// Path: m/44'/coin_type'/account'/change'/index'  (all hardened)
+fn slip10_derive_path(seed: &[u8], path: &[u32]) -> [u8; 32] {
+    let (mut key, mut cc) = slip10_master_key(seed);
+    for &index in path {
+        let (k, c) = slip10_derive_child(&key, &cc, index);
+        key = k;
+        cc = c;
+    }
+    key
+}
+
+// ── Public API ───────────────────────────────────────────────────────
+
 /// Generate a new random mnemonic phrase with the specified number of words.
-///
-/// # Arguments
-/// * `word_count` - Number of words in the mnemonic (12, 15, 18, 21, or 24)
-///
-/// # Returns
-/// * `Result<String, MnemonicError>` - The mnemonic phrase as a space-separated string
-///
-/// # Example
-/// ```
-/// use wallet::mnemonic::generate_mnemonic;
-///
-/// let mnemonic = generate_mnemonic(12).unwrap();
-/// assert_eq!(mnemonic.split_whitespace().count(), 12);
-/// ```
 pub fn generate_mnemonic(word_count: usize) -> Result<String, MnemonicError> {
-    // Validate word count
     if ![12, 15, 18, 21, 24].contains(&word_count) {
         return Err(MnemonicError::InvalidWordCount(word_count));
     }
 
-    // Generate random mnemonic
-    // Note: bip39 crate uses entropy bits: 12 words = 128 bits, 24 words = 256 bits
-    let mnemonic = match word_count {
-        12 => Mnemonic::generate(12).map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?,
-        15 => Mnemonic::generate(15).map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?,
-        18 => Mnemonic::generate(18).map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?,
-        21 => Mnemonic::generate(21).map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?,
-        24 => Mnemonic::generate(24).map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?,
-        _ => unreachable!(),
-    };
+    let mnemonic = Mnemonic::generate(word_count)
+        .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
 
     Ok(mnemonic.to_string())
 }
 
 /// Validate a mnemonic phrase
-///
-/// # Arguments
-/// * `phrase` - The mnemonic phrase to validate
-///
-/// # Returns
-/// * `Result<(), MnemonicError>` - Ok if valid, error otherwise
 pub fn validate_mnemonic(phrase: &str) -> Result<(), MnemonicError> {
     Mnemonic::parse_in(Language::English, phrase)
         .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
     Ok(())
 }
 
-/// Derive a keypair from a mnemonic phrase
-///
-/// # Arguments
-/// * `phrase` - The mnemonic phrase (space-separated words)
-/// * `passphrase` - Optional passphrase for additional security (use "" for none)
-///
-/// # Returns
-/// * `Result<Keypair, MnemonicError>` - The derived keypair
-///
-/// # Example
-/// ```
-/// use wallet::mnemonic::{generate_mnemonic, mnemonic_to_keypair};
-///
-/// let mnemonic = generate_mnemonic(12).unwrap();
-/// let keypair = mnemonic_to_keypair(&mnemonic, "").unwrap();
-/// ```
+/// Derive a keypair from a mnemonic phrase (simple SHA-256 derivation, no HD path).
 pub fn mnemonic_to_keypair(phrase: &str, passphrase: &str) -> Result<Keypair, MnemonicError> {
-    // Parse mnemonic
     let mnemonic = Mnemonic::parse_in(Language::English, phrase)
         .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
 
-    // Convert to seed (512 bits / 64 bytes)
     let seed = mnemonic.to_seed(passphrase);
-
-    // For Ed25519, we need 32 bytes for the private key
-    // We'll use the first 32 bytes of the seed, or hash it if we want deterministic derivation
-    // Using SHA-256 to derive a 32-byte key from the 64-byte seed
-    let mut hasher = Sha256::new();
-    hasher.update(&seed[..]);
-    let key_bytes = hasher.finalize();
+    let key_bytes = Sha256::digest(&seed[..]);
 
     let mut key_array = [0u8; 32];
     key_array.copy_from_slice(&key_bytes[..32]);
@@ -109,60 +105,61 @@ pub fn mnemonic_to_keypair(phrase: &str, passphrase: &str) -> Result<Keypair, Mn
     Keypair::from_bytes(&key_array).map_err(MnemonicError::KeypairError)
 }
 
-/// Derive a keypair from a mnemonic phrase using BIP-32/BIP-44 derivation path
+/// Derive a keypair at an account-level SLIP-0010 path: m/44'/0'/account'
 ///
-/// # Arguments
-/// * `phrase` - The mnemonic phrase (space-separated words)
-/// * `passphrase` - Optional passphrase for additional security (use "" for none)
-/// * `account_index` - Account index for BIP-44 derivation (typically 0)
-///
-/// # Returns
-/// * `Result<Keypair, MnemonicError>` - The derived keypair
-///
-/// # Example
-/// ```
-/// use wallet::mnemonic::{generate_mnemonic, mnemonic_to_keypair_hd};
-///
-/// let mnemonic = generate_mnemonic(12).unwrap();
-/// let keypair = mnemonic_to_keypair_hd(&mnemonic, "", 0).unwrap();
-/// ```
+/// Used for the master_key field in wallet_dat.
 pub fn mnemonic_to_keypair_hd(
     phrase: &str,
     passphrase: &str,
     account_index: u32,
 ) -> Result<Keypair, MnemonicError> {
-    // Parse mnemonic
     let mnemonic = Mnemonic::parse_in(Language::English, phrase)
         .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
 
-    // Convert to seed (512 bits / 64 bytes)
     let seed = mnemonic.to_seed(passphrase);
+    let path = [44, 0, account_index];
+    let key = slip10_derive_path(&seed, &path);
 
-    // Create extended private key from seed
-    let xprv = XPrv::new(seed).map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
+    Keypair::from_bytes(&key).map_err(MnemonicError::KeypairError)
+}
 
-    // BIP-44 path: m/44'/coin_type'/account'/change/address_index
-    // For TIME Coin, we'll use coin_type = 0 (or register a specific one later)
-    // For receiving addresses: change = 0, for change addresses: change = 1
-    let path_str = format!("m/44'/0'/{}'", account_index);
-    let path: DerivationPath = path_str
-        .parse()
-        .map_err(|e: bip32::Error| MnemonicError::DerivationError(e.to_string()))?;
+/// Derive keypair using full BIP-44 / SLIP-0010 path: m/44'/0'/account'/change'/index'
+///
+/// All levels are hardened (Ed25519 SLIP-0010 requirement).
+pub fn mnemonic_to_keypair_bip44(
+    phrase: &str,
+    passphrase: &str,
+    account: u32,
+    change: u32,
+    index: u32,
+) -> Result<Keypair, MnemonicError> {
+    let mnemonic = Mnemonic::parse_in(Language::English, phrase)
+        .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
 
-    // Derive the key using iterator approach
-    let mut current_key = xprv;
-    for child_number in path.as_ref() {
-        current_key = current_key
-            .derive_child(*child_number)
-            .map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-    }
+    let seed = mnemonic.to_seed(passphrase);
+    let path = [44, 0, account, change, index];
+    let key = slip10_derive_path(&seed, &path);
 
-    // Get the private key bytes
-    let private_key_bytes = current_key.private_key().to_bytes();
-    let mut key_array = [0u8; 32];
-    key_array.copy_from_slice(&private_key_bytes);
+    Keypair::from_bytes(&key).map_err(MnemonicError::KeypairError)
+}
 
-    Keypair::from_bytes(&key_array).map_err(MnemonicError::KeypairError)
+/// Derive an address at the given SLIP-0010 / BIP-44 index from a mnemonic.
+///
+/// Path: m/44'/0'/account'/change'/index'
+/// This replaces the old xpub_to_address which required secp256k1 xpub.
+pub fn mnemonic_to_address(
+    phrase: &str,
+    passphrase: &str,
+    account: u32,
+    change: u32,
+    index: u32,
+    network: crate::address::NetworkType,
+) -> Result<String, MnemonicError> {
+    let keypair = mnemonic_to_keypair_bip44(phrase, passphrase, account, change, index)?;
+    let pubkey = keypair.public_key_bytes();
+    let address = crate::address::Address::from_public_key(&pubkey, network)
+        .map_err(|e| MnemonicError::DerivationError(format!("Address generation failed: {}", e)))?;
+    Ok(address.to_string())
 }
 
 /// Mnemonic wrapper for convenience
@@ -172,13 +169,11 @@ pub struct MnemonicPhrase {
 }
 
 impl MnemonicPhrase {
-    /// Generate a new random mnemonic
     pub fn generate(word_count: usize) -> Result<Self, MnemonicError> {
         let phrase = generate_mnemonic(word_count)?;
         Ok(Self { phrase })
     }
 
-    /// Create from an existing phrase
     pub fn from_phrase(phrase: &str) -> Result<Self, MnemonicError> {
         validate_mnemonic(phrase)?;
         Ok(Self {
@@ -186,164 +181,17 @@ impl MnemonicPhrase {
         })
     }
 
-    /// Get the phrase as a string
     pub fn phrase(&self) -> &str {
         &self.phrase
     }
 
-    /// Get word count
     pub fn word_count(&self) -> usize {
         self.phrase.split_whitespace().count()
     }
 
-    /// Derive a keypair from this mnemonic
     pub fn to_keypair(&self, passphrase: &str) -> Result<Keypair, MnemonicError> {
         mnemonic_to_keypair(&self.phrase, passphrase)
     }
-}
-
-/// Get the Extended Public Key (xpub) from a mnemonic
-///
-/// This xpub can be used to derive all child addresses without exposing private keys
-///
-/// # Arguments
-/// * `phrase` - The mnemonic phrase
-/// * `passphrase` - Optional passphrase (use "" for none)
-/// * `account_index` - Account index (typically 0)
-///
-/// # Returns
-/// * `Result<String, MnemonicError>` - The xpub as a base58-encoded string
-pub fn mnemonic_to_xpub(
-    phrase: &str,
-    passphrase: &str,
-    account_index: u32,
-) -> Result<String, MnemonicError> {
-    // Parse mnemonic
-    let mnemonic = Mnemonic::parse_in(Language::English, phrase)
-        .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
-
-    // Convert to seed
-    let seed = mnemonic.to_seed(passphrase);
-
-    // Create extended private key from seed
-    let xprv = XPrv::new(seed).map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-
-    // BIP-44 path: m/44'/0'/account'
-    let path_str = format!("m/44'/0'/{}'", account_index);
-    let path: DerivationPath = path_str
-        .parse()
-        .map_err(|e: bip32::Error| MnemonicError::DerivationError(e.to_string()))?;
-
-    // Derive to account level
-    let mut current_key = xprv;
-    for child_number in path.as_ref() {
-        current_key = current_key
-            .derive_child(*child_number)
-            .map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-    }
-
-    // Get the extended public key
-    let xpub = current_key.public_key();
-
-    // Convert to string (requires Prefix parameter)
-    Ok(xpub.to_string(bip32::Prefix::XPUB))
-}
-
-/// Derive an address from an xpub at a specific index
-///
-/// # Arguments
-/// * `xpub_str` - The extended public key as a string
-/// * `change` - 0 for receiving addresses, 1 for change addresses
-/// * `index` - Address index
-/// * `network` - Network type (mainnet/testnet)
-///
-/// # Returns
-/// * `Result<String, MnemonicError>` - The derived address in TIME1 format
-pub fn xpub_to_address(
-    xpub_str: &str,
-    change: u32,
-    index: u32,
-    network: crate::address::NetworkType,
-) -> Result<String, MnemonicError> {
-    use bip32::XPub;
-
-    // Parse the xpub
-    let xpub: XPub = xpub_str
-        .parse()
-        .map_err(|e: bip32::Error| MnemonicError::DerivationError(e.to_string()))?;
-
-    // Derive change level (0 = receiving, 1 = change)
-    let change_key = xpub
-        .derive_child(bip32::ChildNumber::new(change, false).unwrap())
-        .map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-
-    // Derive address index
-    let address_key = change_key
-        .derive_child(bip32::ChildNumber::new(index, false).unwrap())
-        .map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-
-    // Get the compressed public key bytes (33 bytes with 0x02/0x03 prefix)
-    use bip32::PublicKey;
-    let public_key_compressed = address_key.public_key().to_bytes();
-
-    // Create address from the full 33-byte compressed secp256k1 public key
-    let address = crate::address::Address::from_public_key(&public_key_compressed, network)
-        .map_err(|e| MnemonicError::DerivationError(format!("Address generation failed: {}", e)))?;
-
-    Ok(address.to_string())
-}
-
-/// Derive keypair using full BIP-44 path: m/44'/0'/account'/change/index
-///
-/// This is the CORRECT way to derive addresses in HD wallets.
-/// The GUI wallet should use this for proper BIP-44 compliance.
-///
-/// # Arguments
-/// * `phrase` - The mnemonic phrase
-/// * `passphrase` - Optional passphrase (use "" for none)
-/// * `account` - Account index (typically 0)
-/// * `change` - Change index (0 = receiving, 1 = change addresses)
-/// * `index` - Address index (0, 1, 2, ...)
-///
-/// # Returns
-/// * `Result<Keypair, MnemonicError>` - The derived keypair at the full BIP-44 path
-pub fn mnemonic_to_keypair_bip44(
-    phrase: &str,
-    passphrase: &str,
-    account: u32,
-    change: u32,
-    index: u32,
-) -> Result<Keypair, MnemonicError> {
-    // Parse mnemonic
-    let mnemonic = Mnemonic::parse_in(Language::English, phrase)
-        .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
-
-    // Convert to seed
-    let seed = mnemonic.to_seed(passphrase);
-
-    // Create extended private key from seed
-    let xprv = XPrv::new(seed).map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-
-    // Full BIP-44 path: m/44'/0'/account'/change/index
-    let path_str = format!("m/44'/0'/{}'/{}/{}", account, change, index);
-    let path: DerivationPath = path_str
-        .parse()
-        .map_err(|e: bip32::Error| MnemonicError::DerivationError(e.to_string()))?;
-
-    // Derive the key
-    let mut current_key = xprv;
-    for child_number in path.as_ref() {
-        current_key = current_key
-            .derive_child(*child_number)
-            .map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
-    }
-
-    // Get the private key bytes
-    let private_key_bytes = current_key.private_key().to_bytes();
-    let mut key_array = [0u8; 32];
-    key_array.copy_from_slice(&private_key_bytes);
-
-    Keypair::from_bytes(&key_array).map_err(MnemonicError::KeypairError)
 }
 
 impl std::fmt::Display for MnemonicPhrase {
@@ -397,14 +245,11 @@ mod tests {
     fn test_mnemonic_to_keypair() {
         let mnemonic = generate_mnemonic(12).unwrap();
         let keypair = mnemonic_to_keypair(&mnemonic, "").unwrap();
-
-        // Verify we can get public key
         let _public_key = keypair.public_key_bytes();
     }
 
     #[test]
     fn test_mnemonic_deterministic() {
-        // Same mnemonic should produce same keypair
         let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
         let keypair1 = mnemonic_to_keypair(test_mnemonic, "").unwrap();
@@ -418,7 +263,6 @@ mod tests {
     fn test_mnemonic_with_passphrase() {
         let mnemonic = generate_mnemonic(12).unwrap();
 
-        // Different passphrases should produce different keypairs
         let keypair1 = mnemonic_to_keypair(&mnemonic, "").unwrap();
         let keypair2 = mnemonic_to_keypair(&mnemonic, "password").unwrap();
 
@@ -442,36 +286,42 @@ mod tests {
     }
 
     #[test]
-    fn test_xpub_address_matches_keypair_address() {
-        let mnemonic = generate_mnemonic(12).unwrap();
-        let xpub = mnemonic_to_xpub(&mnemonic, "", 0).unwrap();
+    fn test_slip10_derivation_deterministic() {
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let network = crate::address::NetworkType::Testnet;
 
-        // Derive address via xpub (public key only)
-        let xpub_addr = xpub_to_address(&xpub, 0, 0, network).unwrap();
+        // Same mnemonic + path → same address
+        let addr1 = mnemonic_to_address(mnemonic, "", 0, 0, 0, network).unwrap();
+        let addr2 = mnemonic_to_address(mnemonic, "", 0, 0, 0, network).unwrap();
+        assert_eq!(addr1, addr2);
 
-        // Derive address via keypair (private key → public key)
+        // Different indices → different addresses
+        let addr3 = mnemonic_to_address(mnemonic, "", 0, 0, 1, network).unwrap();
+        assert_ne!(addr1, addr3);
+
+        // Different accounts → different addresses
+        let addr4 = mnemonic_to_address(mnemonic, "", 1, 0, 0, network).unwrap();
+        assert_ne!(addr1, addr4);
+    }
+
+    #[test]
+    fn test_slip10_keypair_matches_address() {
+        let mnemonic = generate_mnemonic(12).unwrap();
+        let network = crate::address::NetworkType::Testnet;
+
+        // Derive via mnemonic_to_address
+        let addr1 = mnemonic_to_address(&mnemonic, "", 0, 0, 0, network).unwrap();
+
+        // Derive via keypair
         let keypair = mnemonic_to_keypair_bip44(&mnemonic, "", 0, 0, 0).unwrap();
         let pubkey = keypair.public_key_bytes();
-        let keypair_addr = crate::address::Address::from_public_key(&pubkey, network)
+        let addr2 = crate::address::Address::from_public_key(&pubkey, network)
             .unwrap()
             .to_string();
 
         assert_eq!(
-            xpub_addr, keypair_addr,
-            "xpub and keypair must derive the same address"
+            addr1, addr2,
+            "mnemonic_to_address and keypair must produce the same address"
         );
-
-        // Also test index 1
-        let xpub_addr1 = xpub_to_address(&xpub, 0, 1, network).unwrap();
-        let keypair1 = mnemonic_to_keypair_bip44(&mnemonic, "", 0, 0, 1).unwrap();
-        let pubkey1 = keypair1.public_key_bytes();
-        let keypair_addr1 = crate::address::Address::from_public_key(&pubkey1, network)
-            .unwrap()
-            .to_string();
-        assert_eq!(xpub_addr1, keypair_addr1, "index 1 must also match");
-
-        // Different indices should produce different addresses
-        assert_ne!(xpub_addr, xpub_addr1);
     }
 }

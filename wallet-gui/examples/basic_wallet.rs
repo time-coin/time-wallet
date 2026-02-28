@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Fee: {} TIME", fee);
     println!(
         "  Change: {} TIME\n",
-        tx.outputs.get(1).map(|o| o.amount).unwrap_or(0)
+        tx.outputs.get(1).map(|o| o.value).unwrap_or(0)
     );
 
     // 5. Export and import private key

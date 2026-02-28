@@ -155,9 +155,6 @@ pub struct Wallet {
     /// HD wallet mnemonic phrase (optional, for recovery)
     #[serde(skip_serializing_if = "Option::is_none")]
     mnemonic_phrase: Option<String>,
-    /// Extended public key for transaction sync
-    #[serde(skip_serializing_if = "Option::is_none")]
-    xpub: Option<String>,
 }
 
 impl Wallet {
@@ -175,7 +172,6 @@ impl Wallet {
             nonce: 0,
             utxos: Vec::new(),
             mnemonic_phrase: None,
-            xpub: None,
         })
     }
 
@@ -193,7 +189,6 @@ impl Wallet {
             nonce: 0,
             utxos: Vec::new(),
             mnemonic_phrase: None,
-            xpub: None,
         })
     }
 
@@ -211,7 +206,6 @@ impl Wallet {
             nonce: 0,
             utxos: Vec::new(),
             mnemonic_phrase: None,
-            xpub: None,
         })
     }
 
@@ -237,14 +231,10 @@ impl Wallet {
         passphrase: &str,
         network: NetworkType,
     ) -> Result<Self, WalletError> {
-        // Use full BIP-44 path m/44'/0'/0'/0/0 for the default keypair
+        // Use full SLIP-0010 / BIP-44 path m/44'/0'/0'/0'/0' for the default keypair
         let keypair = mnemonic_to_keypair_bip44(mnemonic, passphrase, 0, 0, 0)?;
         let public_key = keypair.public_key_bytes();
         let address = Address::from_public_key(&public_key, network)?;
-
-        // Generate xpub for transaction sync
-        use crate::mnemonic::mnemonic_to_xpub;
-        let xpub = mnemonic_to_xpub(mnemonic, passphrase, 0).ok();
 
         Ok(Self {
             keypair,
@@ -254,7 +244,6 @@ impl Wallet {
             nonce: 0,
             utxos: Vec::new(),
             mnemonic_phrase: Some(mnemonic.to_string()),
-            xpub,
         })
     }
 
@@ -268,7 +257,7 @@ impl Wallet {
         self.address.to_string()
     }
 
-    /// Get the compressed public key (33 bytes)
+    /// Get the Ed25519 public key (32 bytes)
     pub fn public_key(&self) -> Vec<u8> {
         self.keypair.public_key_bytes()
     }
@@ -769,16 +758,6 @@ impl Wallet {
 
     pub fn keypair(&self) -> &Keypair {
         &self.keypair
-    }
-
-    /// Get the xpub (extended public key) if available
-    pub fn xpub(&self) -> Option<&str> {
-        self.xpub.as_deref()
-    }
-
-    /// Set the xpub (extended public key)
-    pub fn set_xpub(&mut self, xpub: String) {
-        self.xpub = Some(xpub);
     }
 }
 

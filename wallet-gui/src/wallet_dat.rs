@@ -70,8 +70,6 @@ pub struct WalletDat {
     /// For v3 (current): AES-256-GCM encrypted bytes
     #[serde(with = "serde_bytes")]
     pub encrypted_mnemonic: Vec<u8>,
-    /// Extended Public Key (xpub) for deterministic address derivation
-    pub xpub: String,
     /// Master private key (for signing transactions)
     /// TODO: This should also be encrypted in future version
     pub master_key: [u8; 32],
@@ -102,12 +100,7 @@ impl WalletDat {
         network: NetworkType,
         password: Option<&str>,
     ) -> Result<Self, WalletDatError> {
-        // Generate xpub from mnemonic
-        use wallet::mnemonic::mnemonic_to_xpub;
-        let xpub = mnemonic_to_xpub(mnemonic, "", 0)
-            .map_err(|e| WalletDatError::WalletError(wallet::WalletError::MnemonicError(e)))?;
-
-        // Get master key (first derived key)
+        // Get master key using SLIP-0010 account-level derivation
         use wallet::mnemonic::mnemonic_to_keypair_hd;
         let keypair = mnemonic_to_keypair_hd(mnemonic, "", 0)
             .map_err(|e| WalletDatError::WalletError(wallet::WalletError::MnemonicError(e)))?;
@@ -136,7 +129,6 @@ impl WalletDat {
             kdf_params,
             is_encrypted,
             encrypted_mnemonic,
-            xpub,
             master_key,
         })
     }
@@ -203,21 +195,35 @@ impl WalletDat {
     }
 
     /// Derive an address at the given index
-    /// Uses proper BIP-44 derivation: m/44'/0'/0'/0/index
+    /// Uses SLIP-0010 derivation: m/44'/0'/0'/0'/index'
     pub fn derive_address(&self, index: u32) -> Result<String, WalletDatError> {
-        // ✅ FIXED: Use xpub_to_address for proper BIP-44 derivation
-        // This matches what the masternode uses for address scanning
-        use wallet::xpub_to_address;
+        // Decrypt mnemonic to derive the address via SLIP-0010
+        let mut mnemonic = self.decrypt_mnemonic(None)?;
 
-        let address = xpub_to_address(&self.xpub, 0, index, self.network)
+        use wallet::mnemonic_to_address;
+        let address = mnemonic_to_address(&mnemonic, "", 0, 0, index, self.network)
             .map_err(|e| WalletDatError::SerializationError(e.to_string()))?;
+
+        // SECURITY: Zero mnemonic from memory
+        mnemonic.zeroize();
 
         Ok(address)
     }
 
-    /// Get the xpub for this wallet
-    pub fn get_xpub(&self) -> &str {
-        &self.xpub
+    /// Derive an address with password (for encrypted wallets)
+    pub fn derive_address_with_password(
+        &self,
+        index: u32,
+        password: Option<&str>,
+    ) -> Result<String, WalletDatError> {
+        let mut mnemonic = self.decrypt_mnemonic(password)?;
+
+        use wallet::mnemonic_to_address;
+        let address = mnemonic_to_address(&mnemonic, "", 0, 0, index, self.network)
+            .map_err(|e| WalletDatError::SerializationError(e.to_string()))?;
+
+        mnemonic.zeroize();
+        Ok(address)
     }
 
     /// Get the mnemonic (decrypted) - requires password if encrypted
@@ -372,7 +378,6 @@ mod tests {
         assert_eq!(wallet.version, WalletDat::VERSION);
         assert_eq!(wallet.network, NetworkType::Testnet);
         assert!(!wallet.is_encrypted);
-        assert!(!wallet.xpub.is_empty());
     }
 
     #[test]
@@ -397,7 +402,6 @@ mod tests {
 
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let wallet = WalletDat::from_mnemonic(mnemonic, NetworkType::Testnet).unwrap();
-        let original_xpub = wallet.xpub.clone();
 
         // Get the default path but create a test-specific path in temp directory
         let test_dir = env::temp_dir().join("time-coin-wallet-test");
@@ -414,7 +418,6 @@ mod tests {
 
         assert_eq!(loaded.version, wallet.version);
         assert_eq!(loaded.network, wallet.network);
-        assert_eq!(loaded.xpub, original_xpub);
 
         // Cleanup test file only (NOT production wallet)
         let _ = std::fs::remove_file(&test_wallet_path);
