@@ -73,6 +73,15 @@ pub async fn run(
         ws_handle: None,
     };
 
+    // Auto-load wallet if it exists
+    if WalletManager::exists(network_type) {
+        if WalletManager::is_encrypted(network_type).unwrap_or(false) {
+            let _ = state.svc_tx.send(ServiceEvent::PasswordRequired);
+        } else {
+            state.load_wallet(None);
+        }
+    }
+
     // Kick off peer discovery in the background
     let is_testnet = config.is_testnet();
     let manual_endpoints = config.manual_endpoints();

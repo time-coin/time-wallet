@@ -99,7 +99,6 @@ pub struct PoolStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // TODO: Re-enable these tests after implementing mock methods for PeerConnection and PeerInfo
     /*

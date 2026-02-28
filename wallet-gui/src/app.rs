@@ -10,6 +10,7 @@ use crate::config_new::Config;
 use crate::events::{Screen, ServiceEvent, UiEvent};
 use crate::state::AppState;
 use crate::view;
+use crate::wallet_manager::WalletManager;
 
 /// The wallet application.
 pub struct App {
@@ -28,12 +29,25 @@ impl App {
         let (svc_tx, svc_rx) = mpsc::unbounded_channel();
         let token = CancellationToken::new();
 
+        // Check wallet existence synchronously before first render
+        let network_type = if config.is_testnet() {
+            wallet::NetworkType::Testnet
+        } else {
+            wallet::NetworkType::Mainnet
+        };
+        let wallet_exists = WalletManager::exists(network_type);
+
         // Spawn the single background service task
         let svc_token = token.clone();
         tokio::spawn(crate::service::run(svc_token, ui_rx, svc_tx, config));
 
+        let state = AppState {
+            wallet_exists,
+            ..Default::default()
+        };
+
         Self {
-            state: AppState::default(),
+            state,
             ui_tx,
             svc_rx,
             shutdown_token: token,

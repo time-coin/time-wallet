@@ -618,7 +618,9 @@ impl Mempool {
     pub async fn finalize_transaction(&self, txid: &str) -> Result<(), MempoolError> {
         let mut pool = self.transactions.write().await;
 
-        if let Some(entry) = pool.remove(txid) {
+        if let Some(entry) = pool.get_mut(txid) {
+            entry.finalized = true;
+
             // Also remove from spent_utxos tracking
             let mut spent = self.spent_utxos.write().await;
             for input in &entry.transaction.inputs {

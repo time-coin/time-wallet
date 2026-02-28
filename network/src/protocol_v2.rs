@@ -185,7 +185,7 @@ mod tests {
         let router = MessageRouter::new();
 
         // Node A creates a request
-        let (id, envelope, mut rx) = router
+        let (id, envelope, rx) = router
             .create_request(NetworkMessage::GetBlockchainInfo)
             .await;
 
@@ -230,9 +230,9 @@ mod tests {
         let router = Arc::new(MessageRouter::new());
 
         // Create two concurrent requests
-        let (id1, _env1, mut rx1) = router.create_request(NetworkMessage::GetMempool).await;
+        let (id1, _env1, rx1) = router.create_request(NetworkMessage::GetMempool).await;
 
-        let (id2, _env2, mut rx2) = router
+        let (id2, _env2, rx2) = router
             .create_request(NetworkMessage::GetBlockchainInfo)
             .await;
 

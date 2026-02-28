@@ -283,13 +283,13 @@ mod tests {
     #[test]
     fn test_vdf_compute_and_verify() {
         let input = "test_seed_12345";
-        let iterations = 1000; // Small for testing
+        let iterations = 20_000; // Must exceed CHECKPOINT_INTERVAL (10,000)
 
         let proof = compute_vdf(input, iterations).unwrap();
 
         assert_eq!(proof.iterations, iterations);
         assert!(!proof.output.is_empty());
-        assert!(proof.checkpoints.len() > 0);
+        assert!(!proof.checkpoints.is_empty());
 
         let is_valid = verify_vdf(input, &proof).unwrap();
         assert!(is_valid);
@@ -334,14 +334,13 @@ mod tests {
     #[test]
     fn test_vdf_invalid_checkpoint() {
         let input = "test_input";
-        let iterations = 500;
+        let iterations = 20_000; // Must exceed CHECKPOINT_INTERVAL (10,000)
 
         let mut proof = compute_vdf(input, iterations).unwrap();
 
         // Tamper with checkpoint
-        if !proof.checkpoints.is_empty() {
-            proof.checkpoints[0] = "deadbeef".to_string();
-        }
+        assert!(!proof.checkpoints.is_empty(), "need checkpoints to test tampering");
+        proof.checkpoints[0] = "deadbeef".to_string();
 
         let result = verify_vdf(input, &proof);
         assert!(result.is_err());

@@ -142,21 +142,24 @@ impl RateLimiter {
             entry.cleanup(self.config.window);
         }
 
-        // OPTIMIZATION: Fast-path for well-behaved IPs (most common case)
-        // Check count before doing expensive time-based filtering
-        let request_count = entry.requests.len();
-        if request_count < (self.config.max_requests as usize / 2) {
-            // Well under limit, fast approval
-            entry.add_request(bytes);
-            return Ok(());
-        }
-
-        // Check burst limit (only if we're approaching limits)
+        // Check burst limit
         if entry.is_burst_limited(&self.config) {
             warn!("Burst limit exceeded for IP: {}", ip);
             return Err(RateLimitError::BurstLimitExceeded {
                 ip,
                 limit: self.config.burst_size,
+            });
+        }
+
+        // SECURITY FIX (Issue #6): Check byte limit for bandwidth-based DoS
+        if entry.bytes_transferred + bytes > 1_000_000 {
+            warn!(
+                "Byte limit exceeded for IP: {} ({} + {} bytes would exceed 1MB/min)",
+                ip, entry.bytes_transferred, bytes
+            );
+            return Err(RateLimitError::ByteLimitExceeded {
+                ip,
+                bytes: entry.bytes_transferred + bytes,
             });
         }
 
@@ -167,19 +170,6 @@ impl RateLimiter {
                 ip,
                 limit: self.config.max_requests,
                 window: self.config.window,
-            });
-        }
-
-        // SECURITY FIX (Issue #6): Check byte limit for bandwidth-based DoS
-        // Check if adding this request would exceed the byte limit
-        if entry.bytes_transferred + bytes > 1_000_000 {
-            warn!(
-                "Byte limit exceeded for IP: {} ({} + {} bytes would exceed 1MB/min)",
-                ip, entry.bytes_transferred, bytes
-            );
-            return Err(RateLimitError::ByteLimitExceeded {
-                ip,
-                bytes: entry.bytes_transferred + bytes,
             });
         }
 

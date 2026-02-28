@@ -343,7 +343,7 @@ pub fn is_reorg_safe(fork_info: &ForkInfo, max_reorg_depth: usize) -> bool {
 mod tests {
     use super::*;
     use crate::block::{BlockHeader, MasternodeCounts};
-    use crate::vdf::{compute_vdf, VDFProof};
+    use crate::vdf::compute_vdf;
     use chrono::Utc;
 
     fn create_test_block(number: u64, previous_hash: String, with_vdf: bool) -> Block {
@@ -417,7 +417,7 @@ mod tests {
         let work = calculate_cumulative_work(&blocks);
         // Each block has 1000 iterations, so 3000 total
         // At 100,000 iterations/second, that's 0.03 seconds (rounds to 0)
-        assert!(work >= 0);
+        let _ = work; // verify it computed without panic
     }
 
     #[test]

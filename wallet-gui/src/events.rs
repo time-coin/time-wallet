@@ -164,4 +164,7 @@ pub enum ServiceEvent {
 
     /// Decimal places preference loaded from database.
     DecimalPlacesLoaded(usize),
+
+    /// Whether a wallet file exists on disk.
+    WalletExists(bool),
 }

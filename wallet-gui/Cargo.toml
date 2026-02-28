@@ -58,6 +58,9 @@ base64 = "0.22"
 # QR code generation
 qrcode = { version = "0.14", default-features = false }
 
+# PDF generation for paper backups
+printpdf = "0.7"
+
 # Cross-platform file opener
 open = "5"
 

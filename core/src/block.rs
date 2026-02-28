@@ -1412,7 +1412,7 @@ mod tests {
 
     #[test]
     fn test_coinbase_only_free_tier() {
-        // CRITICAL: Test that coinbase works with only Free tier masternodes
+        // Test that coinbase works with only Free tier masternodes
         let masternodes = vec![
             ("addr1".to_string(), MasternodeTier::Free),
             ("addr2".to_string(), MasternodeTier::Free),
@@ -1426,11 +1426,14 @@ mod tests {
 
         let tx = create_coinbase_transaction(100, &masternodes, &counts, 0, 1234567890);
 
-        // Should have treasury output (entire reward goes there since Free has 0 weight)
+        // Should have treasury output + masternode outputs
         assert!(!tx.outputs.is_empty());
         assert!(tx.outputs.iter().any(|o| o.address == "TREASURY"));
 
-        // Treasury should have full amount since Free tier has 0 weight
+        // Free tier has weight 1, so masternodes should receive rewards
+        let total_rewards = calculate_total_masternode_reward(&counts);
+        assert!(total_rewards > 0);
+
         let treasury_total: u64 = tx
             .outputs
             .iter()
@@ -1438,8 +1441,16 @@ mod tests {
             .map(|o| o.amount)
             .sum();
 
-        // Should be minimal (1 satoshi) since no rewards
-        assert_eq!(treasury_total, 1);
+        // Treasury gets 10% of total rewards
+        assert_eq!(treasury_total, calculate_treasury_allocation(total_rewards));
+
+        // Each Free masternode should get a share of the remaining 90%
+        let masternode_outputs: Vec<_> = tx
+            .outputs
+            .iter()
+            .filter(|o| o.address != "TREASURY")
+            .collect();
+        assert_eq!(masternode_outputs.len(), 2);
     }
 
     #[test]

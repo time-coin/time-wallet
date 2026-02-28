@@ -416,6 +416,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires network access to bootstrap peers
     async fn test_peer_discovery_bootstrap() {
         let mut discovery = PeerDiscovery::new(NetworkType::Testnet);
 

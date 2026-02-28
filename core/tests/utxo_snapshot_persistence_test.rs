@@ -8,8 +8,8 @@ use time_core::state::BlockchainState;
 use time_core::transaction::{Transaction, TxOutput};
 
 /// Test the bug: block finalized after snapshot causes UTXO loss on restart
-#[test]
-fn test_block_after_snapshot_causes_utxo_loss() {
+#[tokio::test]
+async fn test_block_after_snapshot_causes_utxo_loss() {
     let db_dir = std::env::temp_dir().join(format!(
         "time_coin_snapshot_bug_test_{}",
         std::time::SystemTime::now()

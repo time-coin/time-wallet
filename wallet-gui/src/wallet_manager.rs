@@ -200,14 +200,22 @@ impl WalletManager {
         })
     }
 
-    /// Derive an address at the given index
+    /// Derive an address at the given index.
+    /// Uses the in-memory active wallet so it works for both encrypted and
+    /// unencrypted wallets without requiring a password.
     pub fn derive_address(&self, index: u32) -> Result<String, WalletDatError> {
-        self.wallet_dat.derive_address(index)
+        self.active_wallet
+            .derive_address(index)
+            .map_err(WalletDatError::WalletError)
     }
 
-    /// Derive a keypair at the given index
+    /// Derive a keypair at the given index.
+    /// Uses the in-memory active wallet so it works for both encrypted and
+    /// unencrypted wallets without requiring a password.
     pub fn derive_keypair(&self, index: u32) -> Result<Keypair, WalletDatError> {
-        self.wallet_dat.derive_keypair(index)
+        self.active_wallet
+            .derive_keypair(index)
+            .map_err(WalletDatError::WalletError)
     }
 
     /// Get the next available address (and increment counter)

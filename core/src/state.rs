@@ -1839,8 +1839,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_blockchain_initialization() {
+    #[tokio::test]
+    async fn test_blockchain_initialization() {
         let genesis = create_genesis_block();
         let genesis_hash = genesis.hash.clone();
         let db_dir = std::env::temp_dir().join(format!(
@@ -1858,8 +1858,8 @@ mod tests {
         assert_eq!(state.total_supply(), 100_000_000_000);
     }
 
-    #[test]
-    fn test_add_block() {
+    #[tokio::test]
+    async fn test_add_block() {
         let genesis = create_genesis_block();
         let genesis_hash = genesis.hash.clone();
         let db_dir = std::env::temp_dir().join(format!(
@@ -1914,8 +1914,8 @@ mod tests {
         assert!(state.get_block_by_height(1).is_some());
     }
 
-    #[test]
-    fn test_masternode_registration() {
+    #[tokio::test]
+    async fn test_masternode_registration() {
         let genesis = create_genesis_block();
         let db_dir = std::env::temp_dir().join(format!(
             "time_coin_test_{}",
@@ -1939,8 +1939,8 @@ mod tests {
         assert!(state.get_masternode("masternode1").is_some());
     }
 
-    #[test]
-    fn test_get_balance() {
+    #[tokio::test]
+    async fn test_get_balance() {
         let genesis = create_genesis_block();
         let db_dir = std::env::temp_dir().join(format!(
             "time_coin_test_{}",
@@ -1956,8 +1956,8 @@ mod tests {
         assert_eq!(state.get_balance("nonexistent"), 0);
     }
 
-    #[test]
-    fn test_empty_transactions_block_rejected() {
+    #[tokio::test]
+    async fn test_empty_transactions_block_rejected() {
         use crate::block::BlockHeader;
         use chrono::Utc;
 
@@ -2009,8 +2009,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_treasury_initialization() {
+    #[tokio::test]
+    async fn test_treasury_initialization() {
         let genesis = create_genesis_block();
         let db_dir = std::env::temp_dir().join(format!(
             "time_coin_test_{}",
@@ -2029,8 +2029,8 @@ mod tests {
         assert_eq!(state.treasury().total_distributed(), 0);
     }
 
-    #[test]
-    fn test_treasury_allocation_from_block() {
+    #[tokio::test]
+    async fn test_treasury_allocation_from_block() {
         let genesis = create_genesis_block();
         let genesis_hash = genesis.hash.clone();
         let db_dir = std::env::temp_dir().join(format!(
@@ -2088,8 +2088,8 @@ mod tests {
         assert_eq!(state.treasury().allocations().len(), 1);
     }
 
-    #[test]
-    fn test_treasury_proposal_approval_and_distribution() {
+    #[tokio::test]
+    async fn test_treasury_proposal_approval_and_distribution() {
         let genesis = create_genesis_block();
         let genesis_hash = genesis.hash.clone();
         let db_dir = std::env::temp_dir().join(format!(
@@ -2164,8 +2164,8 @@ mod tests {
         assert_eq!(state.treasury().withdrawals().len(), 1);
     }
 
-    #[test]
-    fn test_treasury_insufficient_balance() {
+    #[tokio::test]
+    async fn test_treasury_insufficient_balance() {
         let genesis = create_genesis_block();
         let db_dir = std::env::temp_dir().join(format!(
             "time_coin_test_{}",
@@ -2183,8 +2183,8 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_treasury_unapproved_distribution() {
+    #[tokio::test]
+    async fn test_treasury_unapproved_distribution() {
         let genesis = create_genesis_block();
         let db_dir = std::env::temp_dir().join(format!(
             "time_coin_test_{}",
@@ -2206,8 +2206,8 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_treasury_stats() {
+    #[tokio::test]
+    async fn test_treasury_stats() {
         let genesis = create_genesis_block();
         let genesis_hash = genesis.hash.clone();
         let db_dir = std::env::temp_dir().join(format!(
@@ -2268,8 +2268,8 @@ mod tests {
         assert_eq!(chain_stats.treasury_total_allocated, stats.total_allocated);
     }
 
-    #[test]
-    fn test_treasury_grant_transaction_creation() {
+    #[tokio::test]
+    async fn test_treasury_grant_transaction_creation() {
         use crate::transaction::Transaction;
 
         // Create a treasury grant transaction
@@ -2301,8 +2301,8 @@ mod tests {
         assert!(grant.txid.starts_with("treasury_grant_proposal-123_"));
     }
 
-    #[test]
-    fn test_treasury_grant_in_block_processing() {
+    #[tokio::test]
+    async fn test_treasury_grant_in_block_processing() {
         use crate::transaction::Transaction;
 
         let genesis = create_genesis_block();
@@ -2401,8 +2401,8 @@ mod tests {
         assert_eq!(recipient_balance, amount);
     }
 
-    #[test]
-    fn test_treasury_grant_double_execution_prevention() {
+    #[tokio::test]
+    async fn test_treasury_grant_double_execution_prevention() {
         use crate::transaction::Transaction;
 
         let genesis = create_genesis_block();
@@ -2516,8 +2516,8 @@ mod tests {
             .contains("already been executed"));
     }
 
-    #[test]
-    fn test_treasury_grant_unapproved_proposal() {
+    #[tokio::test]
+    async fn test_treasury_grant_unapproved_proposal() {
         use crate::transaction::Transaction;
 
         let genesis = create_genesis_block();
@@ -2597,8 +2597,8 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("not approved"));
     }
 
-    #[test]
-    fn test_treasury_grant_amount_mismatch() {
+    #[tokio::test]
+    async fn test_treasury_grant_amount_mismatch() {
         use crate::transaction::Transaction;
 
         let genesis = create_genesis_block();
@@ -2686,8 +2686,8 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("does not match"));
     }
 
-    #[test]
-    fn test_cleanup_expired_treasury_proposal() {
+    #[tokio::test]
+    async fn test_cleanup_expired_treasury_proposal() {
         let genesis = create_genesis_block();
         let genesis_hash = genesis.hash.clone();
         let db_dir = std::env::temp_dir().join(format!(

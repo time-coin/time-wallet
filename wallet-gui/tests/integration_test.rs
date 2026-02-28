@@ -98,30 +98,34 @@ fn test_complete_wallet_flow() {
     let sender_address = sender.address_string();
     println!("Sender address: {}", sender_address);
 
-    // Add funds via UTXO
+    // Add funds via UTXO (10 TIME = 1_000_000_000 satoshis)
     let utxo = UTXO {
         tx_hash: [1u8; 32],
         output_index: 0,
-        amount: 10000,
+        amount: 1_000_000_000,
         address: sender_address.clone(),
     };
     sender.add_utxo(utxo);
-    assert_eq!(sender.balance(), 10000);
+    assert_eq!(sender.balance(), 1_000_000_000);
 
     // Create recipient wallet
     let recipient = Wallet::new(NetworkType::Testnet).expect("Failed to create recipient wallet");
     let recipient_address = recipient.address_string();
     println!("Recipient address: {}", recipient_address);
 
-    // Create transaction
+    // Create transaction (send 1 TIME = 100_000_000 satoshis)
+    let send_amount = 100_000_000u64;
     let tx = sender
-        .create_transaction(&recipient_address, 1000, 10)
+        .create_transaction(&recipient_address, send_amount, 0)
         .expect("Failed to create transaction");
+
+    // Fee is calculated internally (1% for < 100 TIME, min 0.01 TIME)
+    let fee = wallet::calculate_fee(send_amount);
 
     // Verify transaction
     assert_eq!(tx.outputs.len(), 2); // recipient + change
-    assert_eq!(tx.outputs[0].value, 1000);
-    assert_eq!(tx.outputs[1].value, 8990); // 10000 - 1000 - 10
+    assert_eq!(tx.outputs[0].value, send_amount);
+    assert_eq!(tx.outputs[1].value, 1_000_000_000 - send_amount - fee);
 
     println!("✅ Complete wallet flow test passed");
 }
@@ -154,24 +158,25 @@ fn test_multiple_utxos() {
     let mut wallet = Wallet::new(NetworkType::Testnet).expect("Failed to create wallet");
     let address = wallet.address_string();
 
-    // Add multiple UTXOs
+    // Add multiple UTXOs (each 1 TIME = 100_000_000 satoshis)
     for i in 0..5 {
         let utxo = UTXO {
             tx_hash: [i; 32],
             output_index: i as u32,
-            amount: 1000,
+            amount: 100_000_000,
             address: address.clone(),
         };
         wallet.add_utxo(utxo);
     }
 
-    assert_eq!(wallet.balance(), 5000);
+    assert_eq!(wallet.balance(), 500_000_000);
     assert_eq!(wallet.utxos().len(), 5);
 
-    // Create transaction that needs multiple UTXOs
+    // Create transaction that needs multiple UTXOs (send 4.5 TIME)
     let recipient = Wallet::new(NetworkType::Testnet).expect("Failed to create recipient");
+    let send_amount = 450_000_000u64;
     let tx = wallet
-        .create_transaction(&recipient.address_string(), 4500, 50)
+        .create_transaction(&recipient.address_string(), send_amount, 0)
         .expect("Failed to create transaction");
 
     // Should use all 5 UTXOs

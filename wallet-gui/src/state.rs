@@ -65,6 +65,7 @@ pub struct AppState {
     pub recent_notifications: Vec<TxNotification>,
 
     // -- UI transient state --
+    pub wallet_exists: bool,
     pub send_address: String,
     pub send_amount: String,
     pub send_fee: String,
@@ -79,6 +80,10 @@ pub struct AppState {
     pub password_input: String,
     pub show_password: bool,
     pub mnemonic_input: String,
+    pub mnemonic_words: Vec<String>,
+    pub mnemonic_use_24: bool,
+    pub mnemonic_valid: Option<bool>,
+    pub show_print_dialog: bool,
     pub new_wallet_password: String,
     pub backed_up_path: Option<String>,
     pub error: Option<String>,
@@ -112,6 +117,7 @@ impl Default for AppState {
             ws_connected: false,
             peers: Vec::new(),
             recent_notifications: Vec::new(),
+            wallet_exists: false,
             send_address: String::new(),
             send_amount: String::new(),
             send_fee: String::new(),
@@ -126,6 +132,10 @@ impl Default for AppState {
             password_input: String::new(),
             show_password: false,
             mnemonic_input: String::new(),
+            mnemonic_words: vec![String::new(); 12],
+            mnemonic_use_24: false,
+            mnemonic_valid: None,
+            show_print_dialog: false,
             new_wallet_password: String::new(),
             backed_up_path: None,
             error: None,
@@ -317,6 +327,8 @@ impl AppState {
             ServiceEvent::ReadyForMnemonic { backed_up_path } => {
                 self.backed_up_path = backed_up_path;
                 self.mnemonic_input.clear();
+                self.mnemonic_words = vec![String::new(); if self.mnemonic_use_24 { 24 } else { 12 }];
+                self.mnemonic_valid = None;
                 self.new_wallet_password.clear();
                 self.screen = Screen::MnemonicSetup;
                 self.loading = false;
@@ -344,6 +356,10 @@ impl AppState {
 
             ServiceEvent::DecimalPlacesLoaded(dp) => {
                 self.decimal_places = dp;
+            }
+
+            ServiceEvent::WalletExists(exists) => {
+                self.wallet_exists = exists;
             }
         }
     }

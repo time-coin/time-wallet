@@ -149,27 +149,42 @@ impl PeerExchange {
             network,
         };
         exchange.load_from_disk();
-        // OPTIMIZATION (Quick Win #4): No longer need cleanup - ports normalized at entry
+        // Normalize any ephemeral ports in persisted data
+        let standard = exchange.standard_port();
+        for peer in exchange.peers.values_mut() {
+            if peer.port >= 49152 {
+                peer.port = standard;
+            }
+        }
         exchange
     }
 
     /// Add or update a peer in the exchange
-    /// OPTIMIZATION (Quick Win #4): Assumes ports are already normalized by caller
-    /// Callers (PeerManager::add_discovered_peer) normalize ephemeral ports before calling this
+    /// On update: replaces ephemeral ports with standard ports, but not vice versa
     pub fn add_peer(&mut self, address: String, port: u16, version: String) {
         let key = address.clone();
 
         if let Some(peer) = self.peers.get_mut(&key) {
             peer.last_seen = Utc::now().timestamp();
             peer.version = version;
-            // Update port (already normalized by caller)
-            peer.port = port;
+            // Only update port if existing port is ephemeral and new port is standard
+            if peer.port >= 49152 && port < 49152 {
+                peer.port = port;
+            }
         } else {
             self.peers
                 .insert(key, PersistentPeerInfo::new(address, port, version));
         }
 
         self.save_to_disk();
+    }
+
+    /// Get the standard port for this network
+    fn standard_port(&self) -> u16 {
+        match self.network {
+            NetworkType::Testnet => 24100,
+            NetworkType::Mainnet => 24000,
+        }
     }
 
     pub fn update_latency(&mut self, address: &str, latency: u32) {

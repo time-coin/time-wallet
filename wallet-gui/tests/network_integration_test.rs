@@ -142,11 +142,11 @@ async fn test_transaction_broadcast() {
     let mut sender = Wallet::new(NetworkType::Testnet).expect("Failed to create wallet");
     let sender_address = sender.address_string();
 
-    // Add UTXO
+    // Add UTXO (10 TIME)
     let utxo = UTXO {
         tx_hash: [1u8; 32],
         output_index: 0,
-        amount: 10000,
+        amount: 1_000_000_000,
         address: sender_address,
     };
     sender.add_utxo(utxo);
@@ -154,16 +154,17 @@ async fn test_transaction_broadcast() {
     // Create recipient
     let recipient = Wallet::new(NetworkType::Testnet).expect("Failed to create recipient");
 
-    // Create transaction
+    // Create transaction (send 1 TIME)
+    let send_amount = 100_000_000u64;
     let tx = sender
-        .create_transaction(&recipient.address_string(), 1000, 10)
+        .create_transaction(&recipient.address_string(), send_amount, 0)
         .expect("Failed to create transaction");
 
     // Verify transaction structure
     assert!(!tx.inputs.is_empty(), "Transaction should have inputs");
     assert!(!tx.outputs.is_empty(), "Transaction should have outputs");
     assert!(
-        tx.outputs.iter().any(|o| o.value == 1000),
+        tx.outputs.iter().any(|o| o.value == send_amount),
         "Should have recipient output"
     );
 
@@ -291,18 +292,18 @@ async fn test_utxo_consistency() {
     let mut wallet = Wallet::new(NetworkType::Testnet).expect("Failed to create wallet");
     let address = wallet.address_string();
 
-    // Add UTXOs
+    // Add UTXOs (5 TIME each)
     let utxo1 = UTXO {
         tx_hash: [1u8; 32],
         output_index: 0,
-        amount: 1000,
+        amount: 500_000_000,
         address: address.clone(),
     };
 
     let utxo2 = UTXO {
         tx_hash: [2u8; 32],
         output_index: 0,
-        amount: 2000,
+        amount: 500_000_000,
         address: address.clone(),
     };
 
@@ -310,12 +311,12 @@ async fn test_utxo_consistency() {
     wallet.add_utxo(utxo2);
 
     let initial_balance = wallet.balance();
-    assert_eq!(initial_balance, 3000);
+    assert_eq!(initial_balance, 1_000_000_000);
 
-    // Create transaction (should consume UTXOs)
+    // Create transaction (send 8 TIME, should consume both UTXOs)
     let recipient = Wallet::new(NetworkType::Testnet).expect("Failed to create recipient");
     let _tx = wallet
-        .create_transaction(&recipient.address_string(), 2500, 10)
+        .create_transaction(&recipient.address_string(), 800_000_000, 0)
         .expect("Failed to create transaction");
 
     // Note: In actual implementation, UTXOs would be marked as spent

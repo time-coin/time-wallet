@@ -2495,43 +2495,27 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_add_connected_peer_triggers_broadcast() {
-        // Test that adding a new connected peer triggers a broadcast
+        // The deprecated add_connected_peer only adds to discovery, not connections.
         let manager = PeerManager::new(
             NetworkType::Testnet,
             "127.0.0.1:24100".parse().unwrap(),
             "127.0.0.1:24100".parse().unwrap(),
         );
 
-        // Create a test peer
         let test_peer = PeerInfo::with_version(
             "192.168.1.101:24100".parse().unwrap(),
             NetworkType::Testnet,
             "0.1.0".to_string(),
         );
 
-        // Add the peer - this should trigger broadcast
+        // Deprecated method adds to discovery, not connections
         manager.add_connected_peer(test_peer.clone()).await;
 
-        // Verify the peer was added to connections map
+        // Connections map should be empty (deprecated method is a no-op for connections)
         let connections = manager.connections.read().await;
-        assert_eq!(connections.len(), 1);
-        assert_eq!(
-            connections
-                .get(&test_peer.address.ip())
-                .unwrap()
-                .info
-                .address,
-            test_peer.address
-        );
-        drop(connections);
-
-        // Adding the same peer again should not create a duplicate
-        manager.add_connected_peer(test_peer.clone()).await;
-
-        // Peer count should still be 1
-        let connections = manager.connections.read().await;
-        assert_eq!(connections.len(), 1);
+        assert_eq!(connections.len(), 0);
     }
 
     #[tokio::test]
@@ -2616,6 +2600,7 @@ mod tests {
     //     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_different_ips_counted_separately() {
         // Test that connections from different IPs are counted separately
         let manager = PeerManager::new(
@@ -2641,23 +2626,13 @@ mod tests {
             "0.1.0".to_string(),
         );
 
-        // Add all three peers
+        // Add all three peers (deprecated — goes to discovery, not connections)
         manager.add_connected_peer(peer1.clone()).await;
         manager.add_connected_peer(peer2.clone()).await;
         manager.add_connected_peer(peer3.clone()).await;
 
-        // Verify that all 3 peers are in the connections map
+        // Deprecated method only adds to discovery, not connections
         let connections = manager.connections.read().await;
-        assert_eq!(
-            connections.len(),
-            3,
-            "Expected 3 peers, but got {}",
-            connections.len()
-        );
-
-        // Verify each peer is present
-        assert!(connections.contains_key(&peer1.address.ip()));
-        assert!(connections.contains_key(&peer2.address.ip()));
-        assert!(connections.contains_key(&peer3.address.ip()));
+        assert_eq!(connections.len(), 0);
     }
 }

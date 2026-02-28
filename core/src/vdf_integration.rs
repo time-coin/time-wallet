@@ -253,7 +253,6 @@ pub fn can_create_block(previous_block: &Block, config: &VDFConfig) -> Result<bo
 mod tests {
     use super::*;
     use crate::block::MasternodeCounts;
-    use crate::transaction::Transaction;
     use crate::BlockHeader;
     use chrono::Utc;
 

@@ -131,9 +131,14 @@ impl MerkleTree {
         Some(MerkleProof { path, indices })
     }
 
-    /// Verify a merkle proof
+    /// Verify a merkle proof given the raw (unhashed) leaf data
     pub fn verify_proof(&self, leaf: &str, proof: &MerkleProof) -> bool {
-        let mut current_hash = Self::hash(leaf);
+        self.verify_proof_hash(&Self::hash(leaf), proof)
+    }
+
+    /// Verify a merkle proof given an already-hashed leaf
+    pub fn verify_proof_hash(&self, leaf_hash: &str, proof: &MerkleProof) -> bool {
+        let mut current_hash = leaf_hash.to_string();
 
         for (sibling, is_left) in proof.path.iter().zip(&proof.indices) {
             let combined = if *is_left {
@@ -266,9 +271,9 @@ mod tests {
         // Generate proof for first leaf
         let proof = tree.generate_proof(0).unwrap();
 
-        // Verify proof
-        let leaf = &tree.leaves[0];
-        assert!(tree.verify_proof(leaf, &proof));
+        // Verify proof using the leaf hash (leaves are already hashed)
+        let leaf_hash = &tree.leaves[0];
+        assert!(tree.verify_proof_hash(leaf_hash, &proof));
     }
 
     #[test]
