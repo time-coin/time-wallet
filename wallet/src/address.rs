@@ -49,9 +49,9 @@ pub struct Address {
 }
 
 impl Address {
-    /// Create an address from a public key (32-byte Ed25519)
+    /// Create an address from a compressed secp256k1 public key (33 bytes)
     pub fn from_public_key(public_key: &[u8], network: NetworkType) -> Result<Self, AddressError> {
-        if public_key.len() != 32 {
+        if public_key.len() != 33 {
             return Err(AddressError::InvalidPublicKey);
         }
 
@@ -210,11 +210,12 @@ impl fmt::Debug for Address {
 mod tests {
     use super::*;
 
-    fn test_public_key() -> [u8; 32] {
-        let mut pk = [0u8; 32];
-        pk[0] = 0x12;
-        pk[1] = 0x34;
-        pk[31] = 0xFF;
+    fn test_public_key() -> [u8; 33] {
+        let mut pk = [0u8; 33];
+        pk[0] = 0x02; // compressed key prefix
+        pk[1] = 0x12;
+        pk[2] = 0x34;
+        pk[32] = 0xFF;
         pk
     }
 

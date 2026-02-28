@@ -1,6 +1,8 @@
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use k256::ecdsa::{
+    signature::{Signer, Verifier},
+    Signature, SigningKey, VerifyingKey,
+};
 use rand::rngs::OsRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -52,23 +54,20 @@ mod signing_key_serde {
         }
         let mut key_bytes = [0u8; 32];
         key_bytes.copy_from_slice(&bytes);
-        Ok(SigningKey::from_bytes(&key_bytes))
+        SigningKey::from_bytes((&key_bytes).into())
+            .map_err(|_| serde::de::Error::custom("Invalid signing key"))
     }
 }
 
 impl Keypair {
     pub fn generate() -> Result<Self, KeypairError> {
-        // ed25519-dalek v2 does not expose `SigningKey::generate`.
-        // Generate 32 random bytes and construct a SigningKey via from_bytes.
-        let mut rng = OsRng;
-        let mut bytes = [0u8; 32];
-        rng.fill_bytes(&mut bytes);
-        let signing_key = SigningKey::from_bytes(&bytes);
+        let signing_key = SigningKey::random(&mut OsRng);
         Ok(Keypair { signing_key })
     }
 
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, KeypairError> {
-        let signing_key = SigningKey::from_bytes(bytes);
+        let signing_key =
+            SigningKey::from_bytes(bytes.into()).map_err(|_| KeypairError::GenerationError)?;
         Ok(Keypair { signing_key })
     }
 
@@ -92,7 +91,7 @@ impl Keypair {
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.signing_key.to_bytes()
+        self.signing_key.to_bytes().into()
     }
 
     pub fn secret_key_bytes(&self) -> [u8; 32] {
@@ -104,25 +103,24 @@ impl Keypair {
     }
 
     pub fn public_key(&self) -> VerifyingKey {
-        self.signing_key.verifying_key()
+        *self.signing_key.verifying_key()
     }
 
-    pub fn public_key_bytes(&self) -> [u8; 32] {
-        self.public_key().to_bytes()
+    /// Returns the 33-byte SEC1 compressed public key
+    pub fn public_key_bytes(&self) -> Vec<u8> {
+        self.public_key().to_encoded_point(true).as_bytes().to_vec()
     }
 
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
-        self.signing_key.sign(message).to_bytes().to_vec()
+        let sig: Signature = self.signing_key.sign(message);
+        sig.to_bytes().to_vec()
     }
 
     pub fn verify(&self, message: &[u8], signature: &[u8]) -> Result<(), KeypairError> {
         if signature.len() != 64 {
             return Err(KeypairError::SignatureError);
         }
-        let mut sig_bytes = [0u8; 64];
-        sig_bytes.copy_from_slice(signature);
-        let sig = Signature::from_bytes(&sig_bytes);
-
+        let sig = Signature::from_slice(signature).map_err(|_| KeypairError::SignatureError)?;
         self.public_key()
             .verify(message, &sig)
             .map_err(|_| KeypairError::VerificationError)
@@ -142,21 +140,16 @@ pub fn verify_signature(
     message: &[u8],
     signature: &[u8],
 ) -> Result<(), KeypairError> {
-    if public_key.len() != 32 {
+    if public_key.len() != 33 {
         return Err(KeypairError::VerificationError);
     }
     if signature.len() != 64 {
         return Err(KeypairError::SignatureError);
     }
 
-    let mut pk_bytes = [0u8; 32];
-    pk_bytes.copy_from_slice(public_key);
     let verifying_key =
-        VerifyingKey::from_bytes(&pk_bytes).map_err(|_| KeypairError::VerificationError)?;
-
-    let mut sig_bytes = [0u8; 64];
-    sig_bytes.copy_from_slice(signature);
-    let sig = Signature::from_bytes(&sig_bytes);
+        VerifyingKey::from_sec1_bytes(public_key).map_err(|_| KeypairError::VerificationError)?;
+    let sig = Signature::from_slice(signature).map_err(|_| KeypairError::SignatureError)?;
 
     verifying_key
         .verify(message, &sig)

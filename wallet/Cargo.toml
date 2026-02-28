@@ -6,7 +6,7 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-ed25519-dalek = "2.1"
+k256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
 rand = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }

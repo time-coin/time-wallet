@@ -1,7 +1,7 @@
 use crate::address::{Address, AddressError, NetworkType};
 use crate::encryption::{EncryptedWallet, EncryptionError, SecurePassword, WalletEncryption};
 use crate::keypair::{Keypair, KeypairError};
-use crate::mnemonic::{mnemonic_to_keypair_hd, MnemonicError};
+use crate::mnemonic::{mnemonic_to_keypair_bip44, MnemonicError};
 use crate::transaction::{Transaction, TransactionError, TxInput, TxOutput};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -237,7 +237,8 @@ impl Wallet {
         passphrase: &str,
         network: NetworkType,
     ) -> Result<Self, WalletError> {
-        let keypair = mnemonic_to_keypair_hd(mnemonic, passphrase, 0)?;
+        // Use full BIP-44 path m/44'/0'/0'/0/0 for the default keypair
+        let keypair = mnemonic_to_keypair_bip44(mnemonic, passphrase, 0, 0, 0)?;
         let public_key = keypair.public_key_bytes();
         let address = Address::from_public_key(&public_key, network)?;
 
@@ -267,8 +268,8 @@ impl Wallet {
         self.address.to_string()
     }
 
-    /// Get the public key
-    pub fn public_key(&self) -> [u8; 32] {
+    /// Get the compressed public key (33 bytes)
+    pub fn public_key(&self) -> Vec<u8> {
         self.keypair.public_key_bytes()
     }
 
@@ -468,10 +469,10 @@ impl Wallet {
         }
     }
 
-    /// Derive a keypair at the given index (for HD wallets)
+    /// Derive a keypair at the given address index (BIP-44: m/44'/0'/0'/0/index)
     pub fn derive_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         if let Some(ref mnemonic) = self.mnemonic_phrase {
-            Ok(mnemonic_to_keypair_hd(mnemonic, "", index)?)
+            Ok(mnemonic_to_keypair_bip44(mnemonic, "", 0, 0, index)?)
         } else {
             Err(WalletError::MnemonicError(
                 crate::mnemonic::MnemonicError::InvalidWordCount(0),

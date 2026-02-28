@@ -282,22 +282,12 @@ pub fn xpub_to_address(
         .derive_child(bip32::ChildNumber::new(index, false).unwrap())
         .map_err(|e| MnemonicError::DerivationError(e.to_string()))?;
 
-    // Get the actual public key bytes from the derived key
-    // This must match what the GUI wallet does when deriving from mnemonic
+    // Get the compressed public key bytes (33 bytes with 0x02/0x03 prefix)
     use bip32::PublicKey;
     let public_key_compressed = address_key.public_key().to_bytes();
 
-    // BIP32 public keys are 33 bytes (compressed format with prefix byte)
-    // but TIME addresses use 32-byte raw keys, so we strip the prefix
-    let public_key_bytes = if public_key_compressed.len() == 33 {
-        &public_key_compressed[1..] // Skip the compression prefix byte (0x02 or 0x03)
-    } else {
-        &public_key_compressed[..]
-    };
-
-    // Create a proper TIME address using the actual public key
-    // This uses the same SHA256+RIPEMD160+Base58+checksum format as regular addresses
-    let address = crate::address::Address::from_public_key(public_key_bytes, network)
+    // Create address from the full 33-byte compressed secp256k1 public key
+    let address = crate::address::Address::from_public_key(&public_key_compressed, network)
         .map_err(|e| MnemonicError::DerivationError(format!("Address generation failed: {}", e)))?;
 
     Ok(address.to_string())
@@ -449,5 +439,39 @@ mod tests {
         let mnemonic_str = generate_mnemonic(12).unwrap();
         let phrase = MnemonicPhrase::from_phrase(&mnemonic_str).unwrap();
         assert_eq!(phrase.phrase(), mnemonic_str);
+    }
+
+    #[test]
+    fn test_xpub_address_matches_keypair_address() {
+        let mnemonic = generate_mnemonic(12).unwrap();
+        let xpub = mnemonic_to_xpub(&mnemonic, "", 0).unwrap();
+        let network = crate::address::NetworkType::Testnet;
+
+        // Derive address via xpub (public key only)
+        let xpub_addr = xpub_to_address(&xpub, 0, 0, network).unwrap();
+
+        // Derive address via keypair (private key → public key)
+        let keypair = mnemonic_to_keypair_bip44(&mnemonic, "", 0, 0, 0).unwrap();
+        let pubkey = keypair.public_key_bytes();
+        let keypair_addr = crate::address::Address::from_public_key(&pubkey, network)
+            .unwrap()
+            .to_string();
+
+        assert_eq!(
+            xpub_addr, keypair_addr,
+            "xpub and keypair must derive the same address"
+        );
+
+        // Also test index 1
+        let xpub_addr1 = xpub_to_address(&xpub, 0, 1, network).unwrap();
+        let keypair1 = mnemonic_to_keypair_bip44(&mnemonic, "", 0, 0, 1).unwrap();
+        let pubkey1 = keypair1.public_key_bytes();
+        let keypair_addr1 = crate::address::Address::from_public_key(&pubkey1, network)
+            .unwrap()
+            .to_string();
+        assert_eq!(xpub_addr1, keypair_addr1, "index 1 must also match");
+
+        // Different indices should produce different addresses
+        assert_ne!(xpub_addr, xpub_addr1);
     }
 }

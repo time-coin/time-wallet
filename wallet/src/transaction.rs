@@ -33,7 +33,7 @@ pub struct OutPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TxInput {
     pub previous_output: OutPoint,
-    /// script_sig format: [32-byte Ed25519 pubkey || 64-byte signature]
+    /// script_sig format: [33-byte compressed secp256k1 pubkey || 64-byte ECDSA signature]
     pub script_sig: Vec<u8>,
     pub sequence: u32,
 }
@@ -150,8 +150,8 @@ impl Transaction {
         let signature = keypair.sign(&message);
         let pubkey_bytes = keypair.public_key_bytes();
 
-        // script_sig = [32-byte pubkey || 64-byte signature]
-        let mut script_sig = Vec::with_capacity(96);
+        // script_sig = [33-byte compressed pubkey || 64-byte signature]
+        let mut script_sig = Vec::with_capacity(97);
         script_sig.extend_from_slice(&pubkey_bytes);
         script_sig.extend_from_slice(&signature);
         self.inputs[input_index].script_sig = script_sig;
@@ -174,12 +174,12 @@ impl Transaction {
         }
 
         let input = &self.inputs[input_index];
-        if input.script_sig.len() != 96 {
+        if input.script_sig.len() != 97 {
             return Err(TransactionError::InvalidSignature);
         }
 
-        let pubkey_bytes = &input.script_sig[..32];
-        let signature = &input.script_sig[32..96];
+        let pubkey_bytes = &input.script_sig[..33];
+        let signature = &input.script_sig[33..97];
 
         let message = self.create_signature_message(input_index);
 
