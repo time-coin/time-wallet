@@ -111,6 +111,7 @@ impl eframe::App for App {
                     Screen::Settings,
                     &self.ui_tx,
                 );
+                nav_button(ui, &mut self.state, "🔧 Tools", Screen::Tools, &self.ui_tx);
             }
         });
 
@@ -136,6 +137,9 @@ impl eframe::App for App {
             }
             Screen::Connections => {
                 view::connections::show(ui, &self.state);
+            }
+            Screen::Tools => {
+                view::tools::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Utxos => {
                 view::overview::show(ui, &mut self.state, &self.ui_tx);

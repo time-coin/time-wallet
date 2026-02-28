@@ -577,6 +577,71 @@ pub async fn run(
                         }
                         let _ = state.svc_tx.send(ServiceEvent::DecimalPlacesLoaded(dp));
                     }
+
+                    UiEvent::ResyncWallet => {
+                        log::info!("🔄 Resync requested — clearing cached data");
+                        if let Some(ref db) = state.wallet_db {
+                            if let Err(e) = db.clear_all_utxos() {
+                                log::warn!("Failed to clear UTXOs: {}", e);
+                            }
+                            let _ = db.save_cached_transactions(&[]);
+                            let _ = db.save_cached_balance(&crate::masternode_client::Balance {
+                                confirmed: 0,
+                                pending: 0,
+                                total: 0,
+                            });
+                        }
+                        // Clear in-memory state
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(vec![]));
+                        let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(vec![]));
+                        let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(
+                            crate::masternode_client::Balance {
+                                confirmed: 0,
+                                pending: 0,
+                                total: 0,
+                            },
+                        ));
+
+                        // Re-fetch everything from masternode
+                        if let Some(ref client) = state.client {
+                            if !state.addresses.is_empty() {
+                                match client.get_transactions_multi(&state.addresses, 200).await {
+                                    Ok(txs) => {
+                                        if let Some(ref db) = state.wallet_db {
+                                            let _ = db.save_cached_transactions(&txs);
+                                        }
+                                        let _ = state
+                                            .svc_tx
+                                            .send(ServiceEvent::TransactionsUpdated(txs));
+                                    }
+                                    Err(e) => {
+                                        log::error!("Resync fetch failed: {}", e);
+                                        let _ = state.svc_tx.send(ServiceEvent::Error(
+                                            format!("Resync failed: {}", e),
+                                        ));
+                                    }
+                                }
+                                let mut all_utxos = Vec::new();
+                                for addr in &state.addresses {
+                                    if let Ok(utxos) = client.get_utxos(addr).await {
+                                        all_utxos.extend(utxos);
+                                    }
+                                }
+                                let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(all_utxos));
+                            }
+                        }
+                        let _ = state.svc_tx.send(ServiceEvent::ResyncComplete);
+                    }
+
+                    UiEvent::OpenConfigFile { path } => {
+                        log::info!("Opening config file: {}", path.display());
+                        if let Err(e) = open::that(&path) {
+                            log::error!("Failed to open editor: {}", e);
+                            let _ = state.svc_tx.send(ServiceEvent::Error(
+                                format!("Failed to open editor: {}", e),
+                            ));
+                        }
+                    }
                 }
             }
 

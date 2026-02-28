@@ -62,6 +62,12 @@ pub enum UiEvent {
     /// Update the number of decimal places for amount display.
     UpdateDecimalPlaces(usize),
 
+    /// Erase cached data and resync all transactions from masternodes.
+    ResyncWallet,
+
+    /// Open a config file in the system's default text editor.
+    OpenConfigFile { path: std::path::PathBuf },
+
     /// Clean shutdown.
     Shutdown,
 }
@@ -79,6 +85,7 @@ pub enum Screen {
     Utxos,
     Connections,
     Settings,
+    Tools,
 }
 
 // ============================================================================
@@ -151,6 +158,9 @@ pub enum ServiceEvent {
 
     /// Non-fatal error to display in the UI.
     Error(String),
+
+    /// Resync completed — cache cleared, fresh data loaded.
+    ResyncComplete,
 
     /// Decimal places preference loaded from database.
     DecimalPlacesLoaded(usize),

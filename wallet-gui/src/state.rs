@@ -87,6 +87,9 @@ pub struct AppState {
 
     // -- Display preferences --
     pub decimal_places: usize,
+
+    // -- Tools state --
+    pub resync_in_progress: bool,
 }
 
 impl Default for AppState {
@@ -129,6 +132,7 @@ impl Default for AppState {
             success: None,
             loading: false,
             decimal_places: 2,
+            resync_in_progress: false,
         }
     }
 }
@@ -330,6 +334,12 @@ impl AppState {
             ServiceEvent::Error(msg) => {
                 self.error = Some(msg);
                 self.loading = false;
+                self.resync_in_progress = false;
+            }
+
+            ServiceEvent::ResyncComplete => {
+                self.resync_in_progress = false;
+                self.success = Some("Resync complete".to_string());
             }
 
             ServiceEvent::DecimalPlacesLoaded(dp) => {
