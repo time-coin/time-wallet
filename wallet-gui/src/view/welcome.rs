@@ -543,13 +543,22 @@ fn render_print_dialog(ctx: &egui::Context, state: &mut AppState) {
                             let _ = open::that(&path);
                             state.success =
                                 Some("Paper backup opened — use your PDF viewer to print".to_string());
-                            // Delete the PDF after a delay so the viewer has time to load it
+                            // Securely delete the PDF after a delay
                             let cleanup_path = path.clone();
                             std::thread::spawn(move || {
                                 std::thread::sleep(std::time::Duration::from_secs(60));
                                 if cleanup_path.exists() {
+                                    // Overwrite with zeros before deleting
+                                    if let Ok(len) = std::fs::metadata(&cleanup_path).map(|m| m.len()) {
+                                        if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&cleanup_path) {
+                                            use std::io::Write;
+                                            let zeros = vec![0u8; len as usize];
+                                            let _ = f.write_all(&zeros);
+                                            let _ = f.sync_all();
+                                        }
+                                    }
                                     let _ = std::fs::remove_file(&cleanup_path);
-                                    log::info!("Cleaned up paper backup PDF");
+                                    log::info!("Securely cleaned up paper backup PDF");
                                 }
                             });
                         }
@@ -731,8 +740,13 @@ fn generate_backup_pdf(words: &[&str]) -> Result<std::path::PathBuf, Box<dyn std
         &font,
     );
 
-    // Save to temp directory
-    let path = std::env::temp_dir().join("time-coin-recovery-phrase.pdf");
+    // Save to temp directory with randomized filename
+    let random_id: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let filename = format!(".tc_print_{:x}.pdf", random_id);
+    let path = std::env::temp_dir().join(filename);
     doc.save(&mut std::io::BufWriter::new(std::fs::File::create(&path)?))?;
 
     Ok(path)
