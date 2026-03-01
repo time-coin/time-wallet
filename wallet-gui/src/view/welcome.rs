@@ -532,17 +532,17 @@ fn render_print_dialog(ctx: &egui::Context, state: &mut AppState) {
 
                 if ui
                     .add(
-                        egui::Button::new(egui::RichText::new("Save PDF").size(14.0))
+                        egui::Button::new(egui::RichText::new("🖨 Print PDF").size(14.0))
                             .min_size(egui::vec2(120.0, 34.0)),
                     )
                     .clicked()
                 {
                     match generate_backup_pdf(&words) {
                         Ok(path) => {
-                            log::info!("Paper backup saved to: {}", path.display());
+                            log::info!("Paper backup PDF opened for printing: {}", path.display());
                             let _ = open::that(&path);
                             state.success =
-                                Some(format!("Paper backup saved to: {}", path.display()));
+                                Some("Paper backup opened — use your PDF viewer to print".to_string());
                         }
                         Err(e) => {
                             state.error = Some(format!("Failed to create PDF: {}", e));
