@@ -112,17 +112,62 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             ui.group(|ui| {
                 ui.set_min_width(ui.available_width());
                 ui.label("Enter a password to encrypt your wallet:");
-                ui.add_space(4.0);
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("⚠ There is no password recovery. If you forget your password, you will need your recovery phrase to restore your wallet.")
+                        .color(egui::Color32::from_rgb(255, 165, 0))
+                        .small(),
+                );
+                ui.add_space(8.0);
+
+                let show = state.show_encrypt_password;
+
                 ui.horizontal(|ui| {
-                    let pw = ui.add(
+                    ui.label("Password:");
+                    ui.add(
                         egui::TextEdit::singleline(&mut state.encrypt_password_input)
-                            .password(true)
+                            .password(!show)
                             .hint_text("Password")
                             .desired_width(250.0),
                     );
-                    if (pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        || ui.button("Encrypt").clicked())
-                        && !state.encrypt_password_input.is_empty()
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Confirm:   ");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.encrypt_password_confirm)
+                            .password(!show)
+                            .hint_text("Confirm password")
+                            .desired_width(250.0),
+                    );
+                });
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut state.show_encrypt_password, "Show password");
+                });
+
+                // Validation
+                let pw = &state.encrypt_password_input;
+                let confirm = &state.encrypt_password_confirm;
+                let passwords_match = !pw.is_empty() && pw == confirm;
+
+                if !pw.is_empty() && !confirm.is_empty() && !passwords_match {
+                    ui.label(
+                        egui::RichText::new("Passwords do not match")
+                            .color(egui::Color32::RED)
+                            .small(),
+                    );
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            passwords_match,
+                            egui::Button::new("Encrypt Wallet"),
+                        )
+                        .clicked()
                     {
                         let _ = ui_tx.send(UiEvent::EncryptWallet {
                             password: state.encrypt_password_input.clone(),
@@ -131,6 +176,8 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                     if ui.button("Cancel").clicked() {
                         state.show_encrypt_dialog = false;
                         state.encrypt_password_input.clear();
+                        state.encrypt_password_confirm.clear();
+                        state.show_encrypt_password = false;
                     }
                 });
             });

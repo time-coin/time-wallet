@@ -104,6 +104,8 @@ pub struct AppState {
     // -- Security --
     pub wallet_encrypted: bool,
     pub encrypt_password_input: String,
+    pub encrypt_password_confirm: String,
+    pub show_encrypt_password: bool,
     pub show_encrypt_dialog: bool,
 
     // -- Tools state --
@@ -165,6 +167,8 @@ impl Default for AppState {
             send_records: std::collections::HashMap::new(),
             wallet_encrypted: true, // assume safe until proven otherwise
             encrypt_password_input: String::new(),
+            encrypt_password_confirm: String::new(),
+            show_encrypt_password: false,
             show_encrypt_dialog: false,
             resync_in_progress: false,
             syncing: false,
@@ -573,6 +577,8 @@ impl AppState {
                 self.wallet_encrypted = true;
                 self.show_encrypt_dialog = false;
                 self.encrypt_password_input.clear();
+                self.encrypt_password_confirm.clear();
+                self.show_encrypt_password = false;
                 self.success = Some("Wallet encrypted successfully".to_string());
             }
         }
