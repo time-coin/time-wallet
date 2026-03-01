@@ -217,30 +217,42 @@ impl AppState {
                     .map(|t| t.txid.clone())
                     .collect();
 
-                // Build set of (txid, is_send) pairs in the RPC results
-                let rpc_keys: std::collections::HashSet<(String, bool)> =
-                    txs.iter().map(|t| (t.txid.clone(), t.is_send)).collect();
+                // Collect locally-inserted send records (they have fee > 0 and
+                // carry the actual send amount from the wallet's perspective).
+                // These take priority over the RPC "send" entries which may
+                // show a different amount (e.g., just the fee for send-to-self).
+                let local_sends: std::collections::HashMap<String, TransactionRecord> = self
+                    .transactions
+                    .iter()
+                    .filter(|t| t.is_send && !t.is_fee && t.fee > 0)
+                    .map(|t| (t.txid.clone(), t.clone()))
+                    .collect();
 
-                // Keep locally-injected records not covered by RPC:
-                // - fee line items (never come from RPC)
-                // - send records if RPC has no send entry for that txid
-                // - WS receive records if txid not in RPC at all
+                // Keep fee line items (never come from RPC) and WS-injected
+                // receive records whose txid is not in the RPC results
+                let rpc_txids: std::collections::HashSet<String> =
+                    txs.iter().map(|t| t.txid.clone()).collect();
                 let ws_only: Vec<_> = self
                     .transactions
                     .iter()
-                    .filter(|t| {
-                        t.is_fee
-                            || !rpc_keys.contains(&(t.txid.clone(), t.is_send))
-                    })
+                    .filter(|t| t.is_fee || (!t.is_send && !rpc_txids.contains(&t.txid)))
                     .cloned()
                     .collect();
 
-                // Deduplicate the RPC results by (txid, is_send, vout) to preserve
-                // both send and receive entries for send-to-self transactions
+                // Deduplicate the RPC results by (txid, is_send, vout).
+                // Replace RPC "send" entries with local versions when available.
                 let mut seen = std::collections::HashSet::new();
                 self.transactions = txs
                     .into_iter()
                     .filter(|t| seen.insert((t.txid.clone(), t.is_send, t.vout)))
+                    .map(|t| {
+                        if t.is_send && !t.is_fee {
+                            if let Some(local) = local_sends.get(&t.txid) {
+                                return local.clone();
+                            }
+                        }
+                        t
+                    })
                     .collect();
 
                 // Restore Approved status from WS finality
@@ -252,7 +264,15 @@ impl AppState {
                     }
                 }
 
-                // Append WS-only txs at the front (dedup against RPC entries)
+                // Append locally-inserted send records if RPC had no send entry
+                for (txid, local_tx) in &local_sends {
+                    let has_send = self.transactions.iter().any(|t| t.txid == *txid && t.is_send && !t.is_fee);
+                    if !has_send {
+                        self.transactions.push(local_tx.clone());
+                    }
+                }
+
+                // Append WS-only txs (dedup against existing entries)
                 for tx in ws_only.into_iter().rev() {
                     let dup = self.transactions.iter().any(|t| {
                         t.txid == tx.txid && t.is_send == tx.is_send && t.is_fee == tx.is_fee && t.vout == tx.vout
