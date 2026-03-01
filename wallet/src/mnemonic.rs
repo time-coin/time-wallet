@@ -91,6 +91,11 @@ pub fn validate_mnemonic(phrase: &str) -> Result<(), MnemonicError> {
     Ok(())
 }
 
+/// Check if a single word is in the BIP-39 English wordlist.
+pub fn is_valid_bip39_word(word: &str) -> bool {
+    Language::English.find_word(word).is_some()
+}
+
 /// Derive a keypair from a mnemonic phrase (simple SHA-256 derivation, no HD path).
 pub fn mnemonic_to_keypair(phrase: &str, passphrase: &str) -> Result<Keypair, MnemonicError> {
     let mnemonic = Mnemonic::parse_in(Language::English, phrase)

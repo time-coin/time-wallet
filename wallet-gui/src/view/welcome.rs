@@ -330,15 +330,16 @@ fn show_mnemonic_setup(
                                 .size(16.0)
                                 .monospace(),
                         );
+                        let word = state.mnemonic_words[i].trim().to_lowercase();
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut state.mnemonic_words[i])
                                 .desired_width(160.0)
                                 .font(egui::TextStyle::Body)
                                 .hint_text("word"),
                         );
-                        // Show per-word checkmark if filled
-                        if !state.mnemonic_words[i].trim().is_empty() {
-                            ui.colored_label(egui::Color32::GREEN, "✓");
+                        // Show per-word validation
+                        if !word.is_empty() && !wallet::is_valid_bip39_word(&word) {
+                            ui.colored_label(egui::Color32::RED, "invalid word");
                         }
                         if response.changed() {
                             state.mnemonic_valid = None;
@@ -359,14 +360,15 @@ fn show_mnemonic_setup(
                                 .size(16.0)
                                 .monospace(),
                         );
+                        let word = state.mnemonic_words[i].trim().to_lowercase();
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut state.mnemonic_words[i])
                                 .desired_width(160.0)
                                 .font(egui::TextStyle::Body)
                                 .hint_text("word"),
                         );
-                        if !state.mnemonic_words[i].trim().is_empty() {
-                            ui.colored_label(egui::Color32::GREEN, "✓");
+                        if !word.is_empty() && !wallet::is_valid_bip39_word(&word) {
+                            ui.colored_label(egui::Color32::RED, "invalid word");
                         }
                         if response.changed() {
                             state.mnemonic_valid = None;
@@ -380,36 +382,52 @@ fn show_mnemonic_setup(
         ui.add_space(16.0);
 
         ui.vertical_centered(|ui| {
-            // Validate button
+            // Auto-validate when all word slots are filled
             let filled_words: Vec<&str> = state
                 .mnemonic_words
                 .iter()
                 .map(|w| w.trim())
                 .filter(|w| !w.is_empty())
                 .collect();
-            let has_words = !filled_words.is_empty();
+            let all_filled = filled_words.len() == word_count;
 
-            if has_words && state.mnemonic_valid.is_none() {
-                if ui
-                    .add(
-                        egui::Button::new(egui::RichText::new("Validate Phrase").size(14.0))
-                            .min_size(egui::vec2(160.0, 34.0)),
-                    )
-                    .clicked()
-                {
-                    let phrase = filled_words.join(" ");
-                    match WalletManager::validate_mnemonic(&phrase) {
-                        Ok(_) => {
-                            state.mnemonic_valid = Some(true);
-                            state.error = None;
-                        }
-                        Err(e) => {
-                            state.mnemonic_valid = Some(false);
-                            state.error = Some(e.to_string());
-                        }
+            if all_filled && state.mnemonic_valid.is_none() {
+                let phrase = filled_words.join(" ");
+                match WalletManager::validate_mnemonic(&phrase) {
+                    Ok(_) => {
+                        state.mnemonic_valid = Some(true);
+                        state.error = None;
+                    }
+                    Err(e) => {
+                        state.mnemonic_valid = Some(false);
+                        state.error = Some(e.to_string());
                     }
                 }
-                ui.add_space(12.0);
+            } else if !all_filled && state.mnemonic_valid.is_none() {
+                // Show Validate button for partial input
+                let has_words = !filled_words.is_empty();
+                if has_words {
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new("Validate Phrase").size(14.0))
+                                .min_size(egui::vec2(160.0, 34.0)),
+                        )
+                        .clicked()
+                    {
+                        let phrase = filled_words.join(" ");
+                        match WalletManager::validate_mnemonic(&phrase) {
+                            Ok(_) => {
+                                state.mnemonic_valid = Some(true);
+                                state.error = None;
+                            }
+                            Err(e) => {
+                                state.mnemonic_valid = Some(false);
+                                state.error = Some(e.to_string());
+                            }
+                        }
+                    }
+                    ui.add_space(12.0);
+                }
             }
 
             // Optional password
