@@ -82,14 +82,18 @@ pub async fn run(
         }
     }
 
-    // Kick off peer discovery in the background
-    let is_testnet = config.is_testnet();
-    let manual_endpoints = config.manual_endpoints();
-    let discovery_svc_tx = state.svc_tx.clone();
-    let discovery_endpoints = manual_endpoints.clone();
-    let mut discovery_handle: Option<DiscoveryHandle> = Some(tokio::spawn(async move {
-        discover_peers(is_testnet, discovery_endpoints, &discovery_svc_tx).await
-    }));
+    // Kick off peer discovery in the background (skip on first run — wait for network selection)
+    let mut is_testnet = config.is_testnet();
+    let mut manual_endpoints = config.manual_endpoints();
+    let mut discovery_handle: Option<DiscoveryHandle> = if config.is_first_run {
+        None
+    } else {
+        let discovery_svc_tx = state.svc_tx.clone();
+        let discovery_endpoints = manual_endpoints.clone();
+        Some(tokio::spawn(async move {
+            discover_peers(is_testnet, discovery_endpoints, &discovery_svc_tx).await
+        }))
+    };
 
     // Periodic refresh every 5 seconds
     let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -463,9 +467,9 @@ pub async fn run(
                     }
 
                     UiEvent::SelectNetwork { network } => {
-                        let is_testnet = network == "testnet";
+                        let selected_testnet = network == "testnet";
                         state.config.network = network;
-                        state.network_type = if is_testnet {
+                        state.network_type = if selected_testnet {
                             NetworkType::Testnet
                         } else {
                             NetworkType::Mainnet
@@ -486,7 +490,18 @@ pub async fn run(
                         // Check if a wallet already exists for this network
                         let exists = WalletManager::exists(state.network_type);
                         let _ = state.svc_tx.send(ServiceEvent::WalletExists(exists));
-                        let _ = state.svc_tx.send(ServiceEvent::NetworkConfigured { is_testnet });
+                        let _ = state.svc_tx.send(ServiceEvent::NetworkConfigured { is_testnet: selected_testnet });
+
+                        // Re-trigger peer discovery with the correct network
+                        is_testnet = selected_testnet;
+                        manual_endpoints = state.config.manual_endpoints();
+                        state.client = None;
+                        let tx = state.svc_tx.clone();
+                        let eps = manual_endpoints.clone();
+                        let tn = is_testnet;
+                        discovery_handle = Some(tokio::spawn(async move {
+                            discover_peers(tn, eps, &tx).await
+                        }));
                     }
 
                     UiEvent::UpdateAddressLabel { index, label } => {
