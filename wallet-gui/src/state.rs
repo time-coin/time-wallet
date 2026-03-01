@@ -276,7 +276,8 @@ impl AppState {
                     })
                     .collect();
 
-                // Restore Approved status from WS finality
+                // Restore Approved status from WS finality (applied to RPC entries;
+                // will be applied again after fee synthesis below)
                 for tx in &mut self.transactions {
                     if matches!(tx.status, TransactionStatus::Pending)
                         && approved_txids.contains(&tx.txid)
@@ -377,6 +378,16 @@ impl AppState {
                     }
                 }
 
+                // Restore Approved status again after fee synthesis and ws_only append,
+                // so synthesized fee entries don't regress to Pending
+                for tx in &mut self.transactions {
+                    if matches!(tx.status, TransactionStatus::Pending)
+                        && approved_txids.contains(&tx.txid)
+                    {
+                        tx.status = TransactionStatus::Approved;
+                    }
+                }
+
                 // Sort newest first
                 self.transactions
                     .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -410,6 +421,14 @@ impl AppState {
                 // Track locally-inserted send records in memory
                 if tx.is_send && !tx.is_fee && tx.fee > 0 {
                     self.send_records.entry(tx.txid.clone()).or_insert_with(|| tx.clone());
+                }
+                // Optimistic balance deduction: immediately reflect send in balance
+                // so the user doesn't have to wait for network confirmation.
+                // Only deduct for the send record (fee is included in tx.fee).
+                if tx.is_send && !tx.is_fee {
+                    let total_deduction = tx.amount + tx.fee;
+                    self.balance.total = self.balance.total.saturating_sub(total_deduction);
+                    self.balance.confirmed = self.balance.confirmed.saturating_sub(total_deduction);
                 }
                 // Insert if not already present; dedup by (txid, is_send, is_fee, vout)
                 let exists = self
