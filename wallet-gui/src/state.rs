@@ -103,6 +103,10 @@ pub struct AppState {
 
     // -- Tools state --
     pub resync_in_progress: bool,
+
+    // -- Sync status --
+    /// True while waiting for the first network poll after wallet load.
+    pub syncing: bool,
 }
 
 impl Default for AppState {
@@ -155,6 +159,7 @@ impl Default for AppState {
             encrypt_password_input: String::new(),
             show_encrypt_dialog: false,
             resync_in_progress: false,
+            syncing: false,
         }
     }
 }
@@ -203,6 +208,7 @@ impl AppState {
                 self.wallet_encrypted = is_encrypted;
                 self.screen = Screen::Overview;
                 self.loading = false;
+                self.syncing = true;
                 self.error = None;
                 self.password_required = false;
                 self.password_input.clear();
@@ -475,7 +481,12 @@ impl AppState {
 
             ServiceEvent::ResyncComplete => {
                 self.resync_in_progress = false;
+                self.syncing = false;
                 self.success = Some("Resync complete".to_string());
+            }
+
+            ServiceEvent::SyncComplete => {
+                self.syncing = false;
             }
 
             ServiceEvent::DecimalPlacesLoaded(dp) => {

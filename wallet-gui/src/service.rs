@@ -108,6 +108,8 @@ pub async fn run(
 
     log::info!("🚀 Service loop started ({})", state.config.network);
 
+    let mut initial_sync_done = false;
+
     loop {
         tokio::select! {
             _ = token.cancelled() => {
@@ -134,6 +136,10 @@ pub async fn run(
                                 let _ = db.save_cached_transactions(&txs);
                             }
                             let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
+                            if !initial_sync_done {
+                                initial_sync_done = true;
+                                let _ = state.svc_tx.send(ServiceEvent::SyncComplete);
+                            }
                         }
                     }
                 }

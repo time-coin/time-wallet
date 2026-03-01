@@ -41,6 +41,18 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
     ui.separator();
     ui.add_space(10.0);
 
+    // Syncing indicator
+    if state.syncing {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(
+                egui::RichText::new("Synchronizing with network…")
+                    .color(egui::Color32::from_rgb(100, 180, 255)),
+            );
+        });
+        ui.add_space(5.0);
+    }
+
     // Balance card
     ui.group(|ui| {
         ui.set_min_width(ui.available_width());

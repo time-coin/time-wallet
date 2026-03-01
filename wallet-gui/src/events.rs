@@ -176,6 +176,9 @@ pub enum ServiceEvent {
     /// Resync completed — cache cleared, fresh data loaded.
     ResyncComplete,
 
+    /// Initial network sync completed (first successful poll).
+    SyncComplete,
+
     /// Decimal places preference loaded from database.
     DecimalPlacesLoaded(usize),
 
