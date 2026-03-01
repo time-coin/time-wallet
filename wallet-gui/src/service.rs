@@ -922,6 +922,13 @@ impl ServiceState {
 
                 // Load cached data from database for instant startup
                 if let Some(ref db) = self.wallet_db {
+                    // Load persisted send records FIRST so they're available for merge
+                    if let Ok(send_records) = db.get_send_records() {
+                        if !send_records.is_empty() {
+                            log::info!("Loaded {} persisted send records", send_records.len());
+                            let _ = self.svc_tx.send(ServiceEvent::SendRecordsLoaded(send_records));
+                        }
+                    }
                     if let Ok(Some(bal)) = db.get_cached_balance() {
                         log::info!("Loaded cached balance from database");
                         let _ = self.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
@@ -930,13 +937,6 @@ impl ServiceState {
                         if !txs.is_empty() {
                             log::info!("Loaded {} cached transactions from database", txs.len());
                             let _ = self.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
-                        }
-                    }
-                    // Load persisted send records for correct send amount display
-                    if let Ok(send_records) = db.get_send_records() {
-                        if !send_records.is_empty() {
-                            log::info!("Loaded {} persisted send records", send_records.len());
-                            let _ = self.svc_tx.send(ServiceEvent::SendRecordsLoaded(send_records));
                         }
                     }
                     // Load external contacts for send address book
