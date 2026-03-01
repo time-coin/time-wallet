@@ -30,7 +30,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 # Networking
 reqwest = { workspace = true }
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.28"
 futures-util = "0.3"
 
 # Logging
