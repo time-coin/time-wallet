@@ -297,6 +297,7 @@ impl MasternodeClient {
                     timestamp,
                     status,
                     is_fee: false,
+                    is_change: false,
                 })
             })
             .collect();
@@ -481,6 +482,9 @@ pub struct TransactionRecord {
     /// True if this entry represents a network fee (ledger line item).
     #[serde(default)]
     pub is_fee: bool,
+    /// True if this is a change output returning to the sender's own wallet.
+    #[serde(default)]
+    pub is_change: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -270,35 +270,41 @@ impl AppState {
                 }
 
                 // Append locally-inserted send records if RPC had no send entry
-                // and synthesize receive entries for send-to-self
-                let own_addrs: std::collections::HashSet<&str> =
-                    self.addresses.iter().map(|a| a.address.as_str()).collect();
                 for (txid, local_tx) in &local_sends {
                     let has_send = self.transactions.iter().any(|t| t.txid == *txid && t.is_send && !t.is_fee);
                     if !has_send {
                         self.transactions.push(local_tx.clone());
                     }
-                    // For send-to-self: if destination is our address and no
-                    // receive entry exists, synthesize one
-                    if own_addrs.contains(local_tx.address.as_str()) {
-                        let has_recv = self.transactions.iter().any(|t| {
-                            t.txid == *txid && !t.is_send && !t.is_fee
-                        });
-                        if !has_recv {
-                            self.transactions.push(TransactionRecord {
-                                txid: txid.clone(),
-                                vout: 0,
-                                is_send: false,
-                                address: local_tx.address.clone(),
-                                amount: local_tx.amount,
-                                fee: 0,
-                                timestamp: local_tx.timestamp,
-                                status: local_tx.status.clone(),
-                                is_fee: false,
-                            });
+                }
+
+                // Mark change outputs: receive entries for txids we sent,
+                // where the receive address is one of our own.
+                // Exception: for send-to-self, keep one receive matching the send amount.
+                let own_addrs: std::collections::HashSet<&str> =
+                    self.addresses.iter().map(|a| a.address.as_str()).collect();
+                let sent_txids: std::collections::HashSet<&str> =
+                    local_sends.keys().map(|s| s.as_str()).collect();
+                let mut kept_self_receive: std::collections::HashSet<String> = std::collections::HashSet::new();
+                for tx in &mut self.transactions {
+                    if !tx.is_send && !tx.is_fee
+                        && sent_txids.contains(tx.txid.as_str())
+                        && own_addrs.contains(tx.address.as_str())
+                    {
+                        // Check if this is a send-to-self receive (amount matches send)
+                        let is_self_receive = local_sends.get(&tx.txid)
+                            .map(|send| own_addrs.contains(send.address.as_str()) && tx.amount == send.amount)
+                            .unwrap_or(false);
+                        if is_self_receive && !kept_self_receive.contains(&tx.txid) {
+                            kept_self_receive.insert(tx.txid.clone());
+                            // This is the actual send-to-self receive, keep it
+                        } else {
+                            tx.is_change = true;
                         }
                     }
                 }
+
+                // Remove change outputs — they're internal and shouldn't be shown
+                self.transactions.retain(|t| !t.is_change);
 
                 // Append WS-only txs (dedup against existing entries)
                 for tx in ws_only.into_iter().rev() {
@@ -336,6 +342,10 @@ impl AppState {
             }
 
             ServiceEvent::TransactionInserted(tx) => {
+                // Skip change outputs — they're internal
+                if tx.is_change {
+                    return;
+                }
                 // Track locally-inserted send records in memory
                 if tx.is_send && !tx.is_fee && tx.fee > 0 {
                     self.send_records.entry(tx.txid.clone()).or_insert_with(|| tx.clone());

@@ -361,6 +361,7 @@ pub async fn run(
                                                             timestamp: now,
                                                             status: crate::masternode_client::TransactionStatus::Pending,
                                                             is_fee: false,
+                                                            is_change: false,
                                                         };
                                                         let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record.clone()));
                                                         // Persist send record so correct amount survives restarts
@@ -379,6 +380,7 @@ pub async fn run(
                                                                 timestamp: now,
                                                                 status: crate::masternode_client::TransactionStatus::Pending,
                                                                 is_fee: true,
+                                                                is_change: false,
                                                             };
                                                             let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(fee_record));
                                                         }
@@ -664,20 +666,41 @@ pub async fn run(
             Some(ws_event) = ws_event_rx.recv() => {
                 match ws_event {
                     WsEvent::TransactionReceived(notification) => {
-                        // Immediately inject as a TransactionRecord for instant display
-                        let tx_record = TransactionRecord {
-                            txid: notification.txid.clone(),
-                            vout: 0,
-                            is_send: false,
-                            address: notification.address.clone(),
-                            amount: crate::masternode_client::json_to_satoshis(&notification.amount),
-                            fee: 0,
-                            timestamp: notification.timestamp,
-                            status: TransactionStatus::Pending,
-                            is_fee: false,
+                        let amount_sats = crate::masternode_client::json_to_satoshis(&notification.amount);
+
+                        // Determine if this is a change output vs a real receive
+                        let send_record = state.wallet_db.as_ref()
+                            .and_then(|db| db.get_send_records().ok())
+                            .and_then(|recs| recs.get(&notification.txid).cloned());
+                        let is_own_addr = state.addresses.contains(&notification.address);
+                        let is_change = if let Some(ref sr) = send_record {
+                            // It's from a txid we sent — change unless it's send-to-self receive
+                            let is_self_send = state.addresses.contains(&sr.address);
+                            if is_self_send && is_own_addr && amount_sats == sr.amount {
+                                false // actual send-to-self receive, keep it
+                            } else {
+                                is_own_addr // other receives to own addr are change
+                            }
+                        } else {
+                            false // not a txid we sent, it's a real receive
                         };
-                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
-                        let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification.clone()));
+
+                        if !is_change {
+                            let tx_record = TransactionRecord {
+                                txid: notification.txid.clone(),
+                                vout: 0,
+                                is_send: false,
+                                address: notification.address.clone(),
+                                amount: amount_sats,
+                                fee: 0,
+                                timestamp: notification.timestamp,
+                                status: TransactionStatus::Pending,
+                                is_fee: false,
+                                is_change: false,
+                            };
+                            let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
+                            let _ = state.svc_tx.send(ServiceEvent::TransactionReceived(notification.clone()));
+                        }
 
                         // Refresh balance immediately
                         if let Some(ref client) = state.client {
@@ -694,20 +717,37 @@ pub async fn run(
                         let amount_sats = crate::masternode_client::json_to_satoshis(&notif.amount);
                         log::info!("✅ UTXO finalized: txid={}... vout={} amount={}", &notif.txid[..16.min(notif.txid.len())], notif.output_index, amount_sats);
 
-                        // Insert transaction record if it doesn't exist yet
-                        // (finality event may arrive before the RPC poll adds it)
-                        let tx_record = TransactionRecord {
-                            txid: notif.txid.clone(),
-                            vout: notif.output_index,
-                            is_send: false,
-                            address: notif.address.clone(),
-                            amount: amount_sats,
-                            fee: 0,
-                            timestamp: chrono::Utc::now().timestamp(),
-                            status: TransactionStatus::Approved,
-                            is_fee: false,
+                        // Determine if this is a change output
+                        let send_record = state.wallet_db.as_ref()
+                            .and_then(|db| db.get_send_records().ok())
+                            .and_then(|recs| recs.get(&notif.txid).cloned());
+                        let is_own_addr = state.addresses.contains(&notif.address);
+                        let is_change = if let Some(ref sr) = send_record {
+                            let is_self_send = state.addresses.contains(&sr.address);
+                            if is_self_send && is_own_addr && amount_sats == sr.amount {
+                                false // send-to-self receive
+                            } else {
+                                is_own_addr
+                            }
+                        } else {
+                            false
                         };
-                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
+
+                        if !is_change {
+                            let tx_record = TransactionRecord {
+                                txid: notif.txid.clone(),
+                                vout: notif.output_index,
+                                is_send: false,
+                                address: notif.address.clone(),
+                                amount: amount_sats,
+                                fee: 0,
+                                timestamp: chrono::Utc::now().timestamp(),
+                                status: TransactionStatus::Approved,
+                                is_fee: false,
+                                is_change: false,
+                            };
+                            let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(tx_record));
+                        }
 
                         let _ = state.svc_tx.send(ServiceEvent::TransactionFinalityUpdated {
                             txid: notif.txid,
