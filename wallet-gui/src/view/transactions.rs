@@ -138,9 +138,21 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
         ui.heading("Transactions");
         ui.add_space(10.0);
 
-        if ui.button("Refresh").clicked() {
-            let _ = ui_tx.send(UiEvent::RefreshTransactions);
+        ui.add(
+            egui::TextEdit::singleline(&mut state.tx_search)
+                .hint_text("Search by address, txid, amount…")
+                .desired_width(250.0),
+        );
+
+        if !state.tx_search.is_empty() && ui.button("Clear").clicked() {
+            state.tx_search.clear();
         }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Refresh").clicked() {
+                let _ = ui_tx.send(UiEvent::RefreshTransactions);
+            }
+        });
     });
 
     ui.separator();
@@ -161,7 +173,28 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
         return;
     }
 
-    ui.label(format!("{} transactions", state.transactions.len()));
+    // Filter transactions by search query
+    let search = state.tx_search.to_lowercase();
+    let filtered: Vec<usize> = state
+        .transactions
+        .iter()
+        .enumerate()
+        .filter(|(_, tx)| {
+            if search.is_empty() {
+                return true;
+            }
+            tx.address.to_lowercase().contains(&search)
+                || tx.txid.to_lowercase().contains(&search)
+                || state.format_time(tx.amount).to_lowercase().contains(&search)
+                || state
+                    .contact_name(&tx.address)
+                    .map(|n| n.to_lowercase().contains(&search))
+                    .unwrap_or(false)
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    ui.label(format!("{} transactions", filtered.len()));
     ui.add_space(5.0);
 
     let mut clicked_idx = None;
@@ -169,7 +202,8 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
         .id_salt("tx_list_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for (i, tx) in state.transactions.iter().enumerate() {
+            for &i in &filtered {
+                let tx = &state.transactions[i];
                 let resp = ui
                     .group(|ui| {
                         ui.set_min_width(ui.available_width());
