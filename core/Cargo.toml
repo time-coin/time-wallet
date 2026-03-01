@@ -24,4 +24,4 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-tempfile = "3.14"
+tempfile = "3.26"
