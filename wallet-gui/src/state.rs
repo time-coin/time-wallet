@@ -202,16 +202,12 @@ impl AppState {
                 self.loading = false;
             }
 
-            ServiceEvent::BalanceUpdated(_balance) => {
-                // We ignore the masternode's balance and compute from transactions
-                self.recompute_balance();
+            ServiceEvent::BalanceUpdated(balance) => {
+                // Use the masternode's UTXO-based balance as the source of truth
+                self.balance = balance;
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
-                // Build set of txids already present in the new RPC results
-                let rpc_txids: std::collections::HashSet<String> =
-                    txs.iter().map(|t| t.txid.clone()).collect();
-
                 // Preserve Approved status: if a tx was already Approved (via WS finality),
                 // don't let a poll result downgrade it back to Pending
                 let approved_txids: std::collections::HashSet<String> = self
@@ -221,20 +217,30 @@ impl AppState {
                     .map(|t| t.txid.clone())
                     .collect();
 
-                // Keep WS-injected txs whose txid is not yet in the RPC results,
-                // and always preserve fee line items (they don't come from RPC)
+                // Build set of (txid, is_send) pairs in the RPC results
+                let rpc_keys: std::collections::HashSet<(String, bool)> =
+                    txs.iter().map(|t| (t.txid.clone(), t.is_send)).collect();
+
+                // Keep locally-injected records not covered by RPC:
+                // - fee line items (never come from RPC)
+                // - send records if RPC has no send entry for that txid
+                // - WS receive records if txid not in RPC at all
                 let ws_only: Vec<_> = self
                     .transactions
                     .iter()
-                    .filter(|t| t.is_fee || !rpc_txids.contains(&t.txid))
+                    .filter(|t| {
+                        t.is_fee
+                            || !rpc_keys.contains(&(t.txid.clone(), t.is_send))
+                    })
                     .cloned()
                     .collect();
 
-                // Deduplicate the RPC results by txid (keep first occurrence)
+                // Deduplicate the RPC results by (txid, is_send, vout) to preserve
+                // both send and receive entries for send-to-self transactions
                 let mut seen = std::collections::HashSet::new();
                 self.transactions = txs
                     .into_iter()
-                    .filter(|t| seen.insert(t.txid.clone()))
+                    .filter(|t| seen.insert((t.txid.clone(), t.is_send, t.vout)))
                     .collect();
 
                 // Restore Approved status from WS finality
@@ -246,16 +252,19 @@ impl AppState {
                     }
                 }
 
-                // Append WS-only txs at the front
+                // Append WS-only txs at the front (dedup against RPC entries)
                 for tx in ws_only.into_iter().rev() {
-                    self.transactions.insert(0, tx);
+                    let dup = self.transactions.iter().any(|t| {
+                        t.txid == tx.txid && t.is_send == tx.is_send && t.is_fee == tx.is_fee && t.vout == tx.vout
+                    });
+                    if !dup {
+                        self.transactions.insert(0, tx);
+                    }
                 }
 
                 // Sort newest first
                 self.transactions
                     .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-
-                self.recompute_balance();
             }
 
             ServiceEvent::UtxosUpdated(utxos) => {
@@ -279,17 +288,16 @@ impl AppState {
             }
 
             ServiceEvent::TransactionInserted(tx) => {
-                // Insert if not already present (fee entries share txid, so check is_fee too)
+                // Insert if not already present; dedup by (txid, is_send, is_fee, vout)
                 let exists = self
                     .transactions
                     .iter()
-                    .any(|t| t.txid == tx.txid && t.is_fee == tx.is_fee);
+                    .any(|t| t.txid == tx.txid && t.is_fee == tx.is_fee && t.is_send == tx.is_send && t.vout == tx.vout);
                 if !exists {
                     self.transactions.push(tx);
                     self.transactions
                         .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
                 }
-                self.recompute_balance();
             }
 
             ServiceEvent::TransactionFinalityUpdated { txid, finalized } => {
@@ -299,7 +307,6 @@ impl AppState {
                         tx.status = TransactionStatus::Approved;
                     }
                 }
-                self.recompute_balance();
             }
 
             ServiceEvent::HealthUpdated(health) => {
@@ -364,39 +371,6 @@ impl AppState {
         }
     }
 
-    /// Recompute balance entirely from the local transaction list.
-    /// This is more accurate than the masternode's UTXO-based `available`
-    /// because it includes finalized-but-not-yet-in-block transactions.
-    fn recompute_balance(&mut self) {
-        let mut confirmed: u64 = 0;
-        let mut pending: u64 = 0;
-
-        for tx in &self.transactions {
-            let net = if tx.is_send || tx.is_fee {
-                0u64
-            } else {
-                tx.amount
-            };
-
-            match tx.status {
-                TransactionStatus::Approved => confirmed = confirmed.saturating_add(net),
-                TransactionStatus::Pending => pending = pending.saturating_add(net),
-                _ => {}
-            }
-        }
-
-        // Subtract sent and fee amounts
-        for tx in &self.transactions {
-            if tx.is_send || tx.is_fee {
-                // Fee entries carry the fee in .amount; send entries carry send amount only
-                confirmed = confirmed.saturating_sub(tx.amount);
-            }
-        }
-
-        self.balance.confirmed = confirmed;
-        self.balance.pending = pending;
-        self.balance.total = confirmed.saturating_add(pending);
-    }
 }
 
 #[cfg(test)]
@@ -436,11 +410,10 @@ mod tests {
             pending: 500,
             total: 1500,
         }));
-        // Balance is computed from transactions, not from masternode RPC
-        // No transactions → all zero
-        assert_eq!(state.balance.confirmed, 0);
-        assert_eq!(state.balance.pending, 0);
-        assert_eq!(state.balance.total, 0);
+        // Balance now uses masternode's UTXO-based balance directly
+        assert_eq!(state.balance.confirmed, 1000);
+        assert_eq!(state.balance.pending, 500);
+        assert_eq!(state.balance.total, 1500);
     }
 
     #[test]
