@@ -112,7 +112,7 @@ impl Config {
     pub fn data_dir() -> Result<PathBuf, ConfigError> {
         let home = dirs::home_dir().ok_or(ConfigError::NoHomeDir)?;
         let mut path = home;
-        path.push(".timecoin");
+        path.push(".time-wallet");
         Ok(path)
     }
 

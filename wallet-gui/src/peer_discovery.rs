@@ -3,7 +3,7 @@
 //! Discovery order:
 //! 1. Manual peers from `config.toml` (`peers = [...]`)
 //! 2. API peers from `https://time-coin.io/api/peers`
-//! 3. Cached peers from `~/.timecoin/peers.dat` (fallback when API is down)
+//! 3. Cached peers from `~/.time-wallet/peers.dat` (fallback when API is down)
 //!
 //! After a successful API fetch, the peer list is cached to `peers.dat`
 //! so the wallet can still connect if the website goes down.
@@ -35,7 +35,7 @@ struct PeerCache {
 
 /// Fetch peers from the API, falling back to the local cache.
 ///
-/// On success the peer list is saved to `~/.timecoin/peers.dat` for
+/// On success the peer list is saved to `~/.time-wallet/peers.dat` for
 /// future offline use.  Returns `http://{ip}:{port}` endpoint URLs.
 pub async fn fetch_peers(is_testnet: bool) -> Result<Vec<String>, PeerDiscoveryError> {
     // Try API first
@@ -106,7 +106,7 @@ async fn fetch_from_api(is_testnet: bool) -> Result<Vec<String>, PeerDiscoveryEr
 
 fn cache_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    Some(home.join(".timecoin").join("peers.dat"))
+    Some(home.join(".time-wallet").join("peers.dat"))
 }
 
 fn save_cache(is_testnet: bool, endpoints: &[String]) {
