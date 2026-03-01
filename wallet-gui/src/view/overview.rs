@@ -64,21 +64,23 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             );
             ui.add_space(4.0);
 
+            let total = state.computed_balance();
+            let confirmed = state.confirmed_balance();
+            let pending = total.saturating_sub(confirmed);
+
             ui.label(
-                egui::RichText::new(state.format_time(state.balance.total))
+                egui::RichText::new(state.format_time(total))
                     .size(32.0)
                     .strong(),
             );
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let confirmed = state.format_time(state.balance.confirmed);
-                let pending_str = state.format_time(state.balance.pending);
-                ui.label(format!("Confirmed: {}", confirmed));
+                ui.label(format!("Confirmed: {}", state.format_time(confirmed)));
                 ui.add_space(20.0);
-                if state.balance.pending > 0 {
+                if pending > 0 {
                     ui.label(
-                        egui::RichText::new(format!("Pending: {}", pending_str))
+                        egui::RichText::new(format!("Pending: {}", state.format_time(pending)))
                             .color(egui::Color32::from_rgb(255, 165, 0)),
                     );
                 }

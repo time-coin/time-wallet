@@ -80,6 +80,13 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
+        // Auto-resync when balance drift is detected
+        if self.state.needs_resync {
+            self.state.needs_resync = false;
+            self.state.resync_in_progress = true;
+            let _ = self.ui_tx.send(UiEvent::ResyncWallet);
+        }
+
         // 2. Navigation sidebar
         egui::SidePanel::left("nav").show(ctx, |ui| {
             ui.add_space(10.0);

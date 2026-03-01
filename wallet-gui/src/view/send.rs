@@ -87,7 +87,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
         // Auto-calculate tiered fee (matches masternode consensus rule)
         let send_amount = parse_time_amount(&state.send_amount);
-        let available = state.balance.confirmed;
+        let available = state.computed_balance();
         let auto_fee = if send_amount > 0 {
             wallet::calculate_fee(send_amount)
         } else {

@@ -48,6 +48,10 @@ pub struct AppState {
 
     // -- Balances --
     pub balance: Balance,
+    /// Last balance reported by the masternode (for drift detection).
+    pub masternode_balance: u64,
+    /// Set when computed balance drifts from masternode — triggers auto-resync.
+    pub needs_resync: bool,
 
     // -- Transactions --
     pub transactions: Vec<TransactionRecord>,
@@ -122,6 +126,8 @@ impl Default for AppState {
                 pending: 0,
                 total: 0,
             },
+            masternode_balance: 0,
+            needs_resync: false,
             transactions: Vec::new(),
             selected_transaction: None,
             utxos: Vec::new(),
@@ -165,6 +171,37 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Compute total balance from the transaction list.
+    /// This is the source of truth for display — updates instantly on send/receive.
+    pub fn computed_balance(&self) -> u64 {
+        let mut bal: i64 = 0;
+        for tx in &self.transactions {
+            if tx.is_send || tx.is_fee {
+                bal -= tx.amount as i64;
+            } else {
+                bal += tx.amount as i64;
+            }
+        }
+        bal.max(0) as u64
+    }
+
+    /// Compute confirmed balance from finalized (Approved) transactions only.
+    /// Updates immediately when a transaction is finalized via WS, not at block time.
+    pub fn confirmed_balance(&self) -> u64 {
+        let mut bal: i64 = 0;
+        for tx in &self.transactions {
+            if !matches!(tx.status, TransactionStatus::Approved) {
+                continue;
+            }
+            if tx.is_send || tx.is_fee {
+                bal -= tx.amount as i64;
+            } else {
+                bal += tx.amount as i64;
+            }
+        }
+        bal.max(0) as u64
+    }
+
     /// Format a satoshi amount as TIME with the user's preferred decimal places.
     pub fn format_time(&self, sats: u64) -> String {
         let time = sats as f64 / 100_000_000.0;
@@ -223,8 +260,21 @@ impl AppState {
             }
 
             ServiceEvent::BalanceUpdated(balance) => {
-                // Use the masternode's UTXO-based balance as the source of truth
-                self.balance = balance;
+                self.masternode_balance = balance.total;
+                // Detect drift between computed and masternode balance
+                let computed = self.computed_balance();
+                if computed != balance.total
+                    && !self.syncing
+                    && !self.resync_in_progress
+                    && !self.transactions.is_empty()
+                {
+                    log::warn!(
+                        "Balance drift: computed={}, masternode={}. Triggering resync.",
+                        computed,
+                        balance.total
+                    );
+                    self.needs_resync = true;
+                }
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
@@ -422,14 +472,6 @@ impl AppState {
                 if tx.is_send && !tx.is_fee && tx.fee > 0 {
                     self.send_records.entry(tx.txid.clone()).or_insert_with(|| tx.clone());
                 }
-                // Optimistic balance deduction: immediately reflect send in balance
-                // so the user doesn't have to wait for network confirmation.
-                // Only deduct for the send record (fee is included in tx.fee).
-                if tx.is_send && !tx.is_fee {
-                    let total_deduction = tx.amount + tx.fee;
-                    self.balance.total = self.balance.total.saturating_sub(total_deduction);
-                    self.balance.confirmed = self.balance.confirmed.saturating_sub(total_deduction);
-                }
                 // Insert if not already present; dedup by (txid, is_send, is_fee, vout)
                 let exists = self
                     .transactions
@@ -574,10 +616,8 @@ mod tests {
             pending: 500,
             total: 1500,
         }));
-        // Balance now uses masternode's UTXO-based balance directly
-        assert_eq!(state.balance.confirmed, 1000);
-        assert_eq!(state.balance.pending, 500);
-        assert_eq!(state.balance.total, 1500);
+        // Masternode balance stored for drift detection
+        assert_eq!(state.masternode_balance, 1500);
     }
 
     #[test]
