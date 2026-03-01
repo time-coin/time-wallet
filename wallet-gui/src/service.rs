@@ -462,6 +462,33 @@ pub async fn run(
                         ));
                     }
 
+                    UiEvent::SelectNetwork { network } => {
+                        let is_testnet = network == "testnet";
+                        state.config.network = network;
+                        state.network_type = if is_testnet {
+                            NetworkType::Testnet
+                        } else {
+                            NetworkType::Mainnet
+                        };
+                        // Save config now that user has chosen
+                        if let Err(e) = state.config.save() {
+                            log::error!("Failed to save config: {}", e);
+                        }
+                        // Reopen wallet_db at the correct path
+                        let db_path = state.config.wallet_dir().join("wallet_db");
+                        if let Some(parent) = db_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        state.wallet_db = WalletDb::open(&db_path).ok();
+                        if state.wallet_db.is_some() {
+                            log::info!("📂 Wallet database reopened at: {}", db_path.display());
+                        }
+                        // Check if a wallet already exists for this network
+                        let exists = WalletManager::exists(state.network_type);
+                        let _ = state.svc_tx.send(ServiceEvent::WalletExists(exists));
+                        let _ = state.svc_tx.send(ServiceEvent::NetworkConfigured { is_testnet });
+                    }
+
                     UiEvent::UpdateAddressLabel { index, label } => {
                         if let Some(addr) = state.addresses.get(index) {
                             if let Some(ref db) = state.wallet_db {

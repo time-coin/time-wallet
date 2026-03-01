@@ -32,6 +32,10 @@ pub struct Config {
     /// The currently active masternode endpoint (set at runtime, not serialized).
     #[serde(skip)]
     pub active_endpoint: Option<String>,
+
+    /// True when no config file existed on disk (first launch).
+    #[serde(skip)]
+    pub is_first_run: bool,
 }
 
 fn default_network() -> String {
@@ -46,6 +50,7 @@ impl Default for Config {
             ws_endpoint: None,
             data_dir: None,
             active_endpoint: None,
+            is_first_run: false,
         }
     }
 }
@@ -60,6 +65,7 @@ impl Config {
             let contents = fs::read_to_string(&config_path)?;
             let mut config: Config = toml::from_str(&contents)?;
             config.data_dir = Some(Self::data_dir()?);
+            config.is_first_run = false;
             log::info!(
                 "✅ Config loaded: network={}, {} manual peers",
                 config.network,
@@ -67,12 +73,13 @@ impl Config {
             );
             Ok(config)
         } else {
-            log::info!("📝 Creating default config");
+            log::info!("📝 First run — no config file found, network selection required");
             let config = Config {
                 data_dir: Some(Self::data_dir()?),
+                is_first_run: true,
                 ..Config::default()
             };
-            config.save()?;
+            // Don't save yet — wait for user to select network
             Ok(config)
         }
     }
@@ -90,15 +97,18 @@ impl Config {
         Ok(())
     }
 
-    /// Get the wallet directory for current network
+    /// Get the wallet directory for current network.
+    /// Mainnet: `~/.time-wallet/`  Testnet: `~/.time-wallet/testnet/`
     pub fn wallet_dir(&self) -> PathBuf {
-        let mut path = self
+        let base = self
             .data_dir
             .clone()
             .unwrap_or_else(|| Self::data_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        path.push("wallets");
-        path.push(&self.network);
-        path
+        if self.is_testnet() {
+            base.join("testnet")
+        } else {
+            base
+        }
     }
 
     /// Get config file path

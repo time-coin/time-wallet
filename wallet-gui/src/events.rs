@@ -47,6 +47,9 @@ pub enum UiEvent {
     /// Switch network (mainnet / testnet). Requires wallet reload.
     SwitchNetwork { network: String },
 
+    /// Select network on first run (before any wallet is created).
+    SelectNetwork { network: String },
+
     /// Update the label for a wallet address (persisted to local db).
     UpdateAddressLabel { index: usize, label: String },
 
@@ -76,6 +79,7 @@ pub enum UiEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Welcome,
+    NetworkSelect,
     MnemonicSetup,
     MnemonicConfirm,
     Overview,
@@ -158,6 +162,9 @@ pub enum ServiceEvent {
 
     /// Non-fatal error to display in the UI.
     Error(String),
+
+    /// Network selected on first run — config saved, service reinitialized.
+    NetworkConfigured { is_testnet: bool },
 
     /// Resync completed — cache cleared, fresh data loaded.
     ResyncComplete,

@@ -13,6 +13,9 @@ use crate::wallet_manager::WalletManager;
 /// Render the welcome screen.
 pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
     match state.screen {
+        Screen::NetworkSelect => {
+            show_network_select(ui, ui_tx);
+        }
         Screen::MnemonicSetup | Screen::MnemonicConfirm => {
             show_mnemonic_setup(ui, state, ui_tx);
         }
@@ -26,6 +29,66 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             }
         }
     }
+}
+
+/// First-run network selection — Mainnet or Testnet.
+fn show_network_select(ui: &mut Ui, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+
+        // Logo
+        let logo_bytes = include_bytes!("../../assets/logo.png");
+        let image =
+            egui::Image::from_bytes("bytes://logo.png", logo_bytes.as_slice()).max_width(128.0);
+        ui.add(image);
+
+        ui.add_space(20.0);
+        ui.heading(egui::RichText::new("TIME Coin Wallet").size(28.0).strong());
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Welcome! Select a network to get started.")
+                .size(14.0)
+                .color(egui::Color32::GRAY),
+        );
+
+        ui.add_space(40.0);
+
+        let button_size = egui::vec2(260.0, 50.0);
+
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new("🌐 Mainnet").size(18.0),
+            ).min_size(button_size))
+            .clicked()
+        {
+            let _ = ui_tx.send(UiEvent::SelectNetwork {
+                network: "mainnet".to_string(),
+            });
+        }
+        ui.label(
+            egui::RichText::new("Production network — real TIME coins")
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+        );
+
+        ui.add_space(16.0);
+
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new("🧪 Testnet").size(18.0),
+            ).min_size(button_size))
+            .clicked()
+        {
+            let _ = ui_tx.send(UiEvent::SelectNetwork {
+                network: "testnet".to_string(),
+            });
+        }
+        ui.label(
+            egui::RichText::new("Test network — for development and testing")
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+        );
+    });
 }
 
 /// Welcome landing page — open an existing wallet or create a new one.

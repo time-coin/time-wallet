@@ -337,14 +337,15 @@ impl WalletDat {
         }
     }
 
-    /// Get the default wallet path for the given network
+    /// Get the default wallet path for the given network.
+    /// Mainnet: `~/.time-wallet/time-wallet.dat`
+    /// Testnet: `~/.time-wallet/testnet/time-wallet.dat`
     pub fn default_path(network: NetworkType) -> PathBuf {
         let data_dir = Self::get_data_dir();
-        let network_dir = match network {
-            NetworkType::Mainnet => "mainnet",
-            NetworkType::Testnet => "testnet",
-        };
-        data_dir.join(network_dir).join("time-wallet.dat")
+        match network {
+            NetworkType::Mainnet => data_dir.join("time-wallet.dat"),
+            NetworkType::Testnet => data_dir.join("testnet").join("time-wallet.dat"),
+        }
     }
 
     /// Get the TIME Coin data directory

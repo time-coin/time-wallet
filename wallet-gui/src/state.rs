@@ -270,10 +270,29 @@ impl AppState {
                 }
 
                 // Append locally-inserted send records if RPC had no send entry
+                // and synthesize fee line items from persisted send records
                 for (txid, local_tx) in &local_sends {
                     let has_send = self.transactions.iter().any(|t| t.txid == *txid && t.is_send && !t.is_fee);
                     if !has_send {
                         self.transactions.push(local_tx.clone());
+                    }
+                    // Ensure a fee line item exists for this send
+                    if local_tx.fee > 0 {
+                        let has_fee = self.transactions.iter().any(|t| t.txid == *txid && t.is_fee);
+                        if !has_fee {
+                            self.transactions.push(TransactionRecord {
+                                txid: txid.clone(),
+                                vout: 0,
+                                is_send: true,
+                                address: "Network Fee".to_string(),
+                                amount: local_tx.fee,
+                                fee: 0,
+                                timestamp: local_tx.timestamp,
+                                status: local_tx.status.clone(),
+                                is_fee: true,
+                                is_change: false,
+                            });
+                        }
                     }
                 }
 
@@ -433,6 +452,11 @@ impl AppState {
 
             ServiceEvent::SendRecordsLoaded(records) => {
                 self.send_records = records;
+            }
+
+            ServiceEvent::NetworkConfigured { is_testnet } => {
+                self.is_testnet = is_testnet;
+                self.screen = Screen::MnemonicSetup;
             }
         }
     }

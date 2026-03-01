@@ -36,13 +36,21 @@ impl App {
             wallet::NetworkType::Mainnet
         };
         let wallet_exists = WalletManager::exists(network_type);
+        let is_first_run = config.is_first_run;
 
         // Spawn the single background service task
         let svc_token = token.clone();
         tokio::spawn(crate::service::run(svc_token, ui_rx, svc_tx, config));
 
+        let initial_screen = if is_first_run {
+            crate::events::Screen::NetworkSelect
+        } else {
+            crate::events::Screen::Welcome
+        };
+
         let state = AppState {
             wallet_exists,
+            screen: initial_screen,
             ..Default::default()
         };
 
@@ -131,7 +139,7 @@ impl eframe::App for App {
 
         // 3. Central panel — route to the active view
         egui::CentralPanel::default().show(ctx, |ui| match self.state.screen {
-            Screen::Welcome | Screen::MnemonicSetup | Screen::MnemonicConfirm => {
+            Screen::Welcome | Screen::NetworkSelect | Screen::MnemonicSetup | Screen::MnemonicConfirm => {
                 view::welcome::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Overview => {
