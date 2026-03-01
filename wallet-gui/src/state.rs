@@ -232,13 +232,13 @@ impl AppState {
                 }
 
                 // Keep fee line items (never come from RPC) and WS-injected
-                // receive records whose txid is not in the RPC results
-                let rpc_txids: std::collections::HashSet<String> =
-                    txs.iter().map(|t| t.txid.clone()).collect();
+                // receive records not already covered by RPC results
+                let rpc_keys: std::collections::HashSet<(String, bool, u32)> =
+                    txs.iter().map(|t| (t.txid.clone(), t.is_send, t.vout)).collect();
                 let ws_only: Vec<_> = self
                     .transactions
                     .iter()
-                    .filter(|t| t.is_fee || (!t.is_send && !rpc_txids.contains(&t.txid)))
+                    .filter(|t| t.is_fee || !rpc_keys.contains(&(t.txid.clone(), t.is_send, t.vout)))
                     .cloned()
                     .collect();
 

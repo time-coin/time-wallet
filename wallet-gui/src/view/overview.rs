@@ -179,9 +179,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                             if tx.timestamp > 0 {
                                 if let Some(dt) = chrono::DateTime::from_timestamp(tx.timestamp, 0)
                                 {
+                                    let local: chrono::DateTime<chrono::Local> = dt.into();
                                     ui.label(
                                         egui::RichText::new(
-                                            dt.format("%Y-%m-%d %H:%M").to_string(),
+                                            local.format("%Y-%m-%d %H:%M").to_string(),
                                         )
                                         .color(egui::Color32::GRAY),
                                     );

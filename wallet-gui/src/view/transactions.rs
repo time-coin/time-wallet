@@ -124,7 +124,8 @@ fn show_detail(ui: &mut Ui, state: &mut AppState, idx: usize) {
             if tx.timestamp > 0 {
                 ui.label(egui::RichText::new("Date:").strong());
                 if let Some(dt) = chrono::DateTime::from_timestamp(tx.timestamp, 0) {
-                    ui.label(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string());
+                    let local: chrono::DateTime<chrono::Local> = dt.into();
+                    ui.label(local.format("%Y-%m-%d %H:%M:%S").to_string());
                 }
                 ui.end_row();
             }
@@ -240,9 +241,10 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
                                         if let Some(dt) =
                                             chrono::DateTime::from_timestamp(tx.timestamp, 0)
                                         {
+                                            let local: chrono::DateTime<chrono::Local> = dt.into();
                                             ui.label(
                                                 egui::RichText::new(
-                                                    dt.format("%Y-%m-%d %H:%M").to_string(),
+                                                    local.format("%Y-%m-%d %H:%M").to_string(),
                                                 )
                                                 .color(egui::Color32::GRAY),
                                             );
