@@ -167,4 +167,7 @@ pub enum ServiceEvent {
 
     /// Whether a wallet file exists on disk.
     WalletExists(bool),
+
+    /// Persisted send records loaded from database.
+    SendRecordsLoaded(std::collections::HashMap<String, TransactionRecord>),
 }

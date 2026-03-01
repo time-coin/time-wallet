@@ -359,7 +359,11 @@ pub async fn run(
                                                             status: crate::masternode_client::TransactionStatus::Pending,
                                                             is_fee: false,
                                                         };
-                                                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record));
+                                                        let _ = state.svc_tx.send(ServiceEvent::TransactionInserted(sent_record.clone()));
+                                                        // Persist send record so correct amount survives restarts
+                                                        if let Some(ref db) = state.wallet_db {
+                                                            let _ = db.save_send_record(&sent_record);
+                                                        }
                                                         // Insert fee as a separate ledger entry
                                                         if actual_fee > 0 {
                                                             let fee_record = crate::masternode_client::TransactionRecord {
@@ -926,6 +930,13 @@ impl ServiceState {
                         if !txs.is_empty() {
                             log::info!("Loaded {} cached transactions from database", txs.len());
                             let _ = self.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
+                        }
+                    }
+                    // Load persisted send records for correct send amount display
+                    if let Ok(send_records) = db.get_send_records() {
+                        if !send_records.is_empty() {
+                            log::info!("Loaded {} persisted send records", send_records.len());
+                            let _ = self.svc_tx.send(ServiceEvent::SendRecordsLoaded(send_records));
                         }
                     }
                     // Load external contacts for send address book

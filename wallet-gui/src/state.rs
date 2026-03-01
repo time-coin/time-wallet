@@ -93,6 +93,9 @@ pub struct AppState {
     // -- Display preferences --
     pub decimal_places: usize,
 
+    // -- Persisted send records (correct amounts from wallet, keyed by txid) --
+    pub send_records: std::collections::HashMap<String, TransactionRecord>,
+
     // -- Tools state --
     pub resync_in_progress: bool,
 }
@@ -142,6 +145,7 @@ impl Default for AppState {
             success: None,
             loading: false,
             decimal_places: 2,
+            send_records: std::collections::HashMap::new(),
             resync_in_progress: false,
         }
     }
@@ -217,16 +221,15 @@ impl AppState {
                     .map(|t| t.txid.clone())
                     .collect();
 
-                // Collect locally-inserted send records (they have fee > 0 and
-                // carry the actual send amount from the wallet's perspective).
-                // These take priority over the RPC "send" entries which may
-                // show a different amount (e.g., just the fee for send-to-self).
-                let local_sends: std::collections::HashMap<String, TransactionRecord> = self
-                    .transactions
-                    .iter()
-                    .filter(|t| t.is_send && !t.is_fee && t.fee > 0)
-                    .map(|t| (t.txid.clone(), t.clone()))
-                    .collect();
+                // Use persisted send records (survive restarts) as the source
+                // of truth for send amounts. Also collect in-memory send records
+                // (fee > 0 means locally-inserted, not from RPC).
+                let mut local_sends = self.send_records.clone();
+                for t in &self.transactions {
+                    if t.is_send && !t.is_fee && t.fee > 0 {
+                        local_sends.entry(t.txid.clone()).or_insert_with(|| t.clone());
+                    }
+                }
 
                 // Keep fee line items (never come from RPC) and WS-injected
                 // receive records whose txid is not in the RPC results
@@ -240,7 +243,7 @@ impl AppState {
                     .collect();
 
                 // Deduplicate the RPC results by (txid, is_send, vout).
-                // Replace RPC "send" entries with local versions when available.
+                // Replace RPC "send" entries with persisted local versions.
                 let mut seen = std::collections::HashSet::new();
                 self.transactions = txs
                     .into_iter()
@@ -248,7 +251,9 @@ impl AppState {
                     .map(|t| {
                         if t.is_send && !t.is_fee {
                             if let Some(local) = local_sends.get(&t.txid) {
-                                return local.clone();
+                                let mut merged = local.clone();
+                                merged.status = t.status.clone();
+                                return merged;
                             }
                         }
                         t
@@ -308,6 +313,10 @@ impl AppState {
             }
 
             ServiceEvent::TransactionInserted(tx) => {
+                // Track locally-inserted send records in memory
+                if tx.is_send && !tx.is_fee && tx.fee > 0 {
+                    self.send_records.entry(tx.txid.clone()).or_insert_with(|| tx.clone());
+                }
                 // Insert if not already present; dedup by (txid, is_send, is_fee, vout)
                 let exists = self
                     .transactions
@@ -387,6 +396,10 @@ impl AppState {
 
             ServiceEvent::WalletExists(exists) => {
                 self.wallet_exists = exists;
+            }
+
+            ServiceEvent::SendRecordsLoaded(records) => {
+                self.send_records = records;
             }
         }
     }
