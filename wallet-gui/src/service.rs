@@ -116,11 +116,14 @@ pub async fn run(
             _ = data_poll_interval.tick() => {
                 if let Some(ref client) = state.client {
                     if !state.addresses.is_empty() {
-                        if let Ok(bal) = client.get_balances(&state.addresses).await {
-                            if let Some(ref db) = state.wallet_db {
-                                let _ = db.save_cached_balance(&bal);
+                        match client.get_balances(&state.addresses).await {
+                            Ok(bal) => {
+                                if let Some(ref db) = state.wallet_db {
+                                    let _ = db.save_cached_balance(&bal);
+                                }
+                                let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
                             }
-                            let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                            Err(e) => log::warn!("Balance poll failed: {}", e),
                         }
                         if let Ok(txs) = client.get_transactions_multi(&state.addresses, 100).await {
                             if let Some(ref db) = state.wallet_db {
@@ -679,8 +682,9 @@ pub async fn run(
                         // Refresh balance immediately
                         if let Some(ref client) = state.client {
                             if !state.addresses.is_empty() {
-                                if let Ok(bal) = client.get_balances(&state.addresses).await {
-                                    let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                                match client.get_balances(&state.addresses).await {
+                                    Ok(bal) => { let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal)); }
+                                    Err(e) => log::warn!("Failed to refresh balance after receive: {}", e),
                                 }
                             }
                         }
@@ -713,8 +717,9 @@ pub async fn run(
                         // Refresh balance after finalization
                         if let Some(ref client) = state.client {
                             if !state.addresses.is_empty() {
-                                if let Ok(bal) = client.get_balances(&state.addresses).await {
-                                    let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                                match client.get_balances(&state.addresses).await {
+                                    Ok(bal) => { let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal)); }
+                                    Err(e) => log::warn!("Failed to refresh balance after finalization: {}", e),
                                 }
                             }
                         }
