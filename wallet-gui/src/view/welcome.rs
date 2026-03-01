@@ -543,6 +543,15 @@ fn render_print_dialog(ctx: &egui::Context, state: &mut AppState) {
                             let _ = open::that(&path);
                             state.success =
                                 Some("Paper backup opened — use your PDF viewer to print".to_string());
+                            // Delete the PDF after a delay so the viewer has time to load it
+                            let cleanup_path = path.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_secs(60));
+                                if cleanup_path.exists() {
+                                    let _ = std::fs::remove_file(&cleanup_path);
+                                    log::info!("Cleaned up paper backup PDF");
+                                }
+                            });
                         }
                         Err(e) => {
                             state.error = Some(format!("Failed to create PDF: {}", e));
