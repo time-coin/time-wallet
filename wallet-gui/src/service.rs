@@ -687,6 +687,26 @@ pub async fn run(
                             ));
                         }
                     }
+
+                    UiEvent::EncryptWallet { password } => {
+                        if let Some(ref mut wm) = state.wallet {
+                            match wm.encrypt_wallet(&password) {
+                                Ok(()) => {
+                                    log::info!("✅ Wallet encrypted successfully");
+                                    let _ = state.svc_tx.send(ServiceEvent::WalletEncrypted);
+                                }
+                                Err(e) => {
+                                    let _ = state.svc_tx.send(ServiceEvent::Error(
+                                        format!("Failed to encrypt wallet: {}", e),
+                                    ));
+                                }
+                            }
+                        } else {
+                            let _ = state.svc_tx.send(ServiceEvent::Error(
+                                "No wallet loaded".to_string(),
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -987,9 +1007,11 @@ impl ServiceState {
                     })
                     .collect();
                 let is_testnet = self.network_type == NetworkType::Testnet;
+                let is_encrypted = wm.is_wallet_encrypted();
                 let _ = self.svc_tx.send(ServiceEvent::WalletLoaded {
                     addresses: address_infos,
                     is_testnet,
+                    is_encrypted,
                 });
 
                 // Load cached data from database for instant startup

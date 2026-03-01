@@ -147,10 +147,22 @@ impl WalletManager {
         })
     }
 
-    /// Check if existing wallet is encrypted
+    /// Check if existing wallet is encrypted (static, loads from disk)
     pub fn is_encrypted(network: NetworkType) -> Result<bool, WalletDatError> {
         let wallet_dat = WalletDat::load(network)?;
         Ok(wallet_dat.is_encrypted())
+    }
+
+    /// Check if the loaded wallet is encrypted
+    pub fn is_wallet_encrypted(&self) -> bool {
+        self.wallet_dat.is_encrypted()
+    }
+
+    /// Encrypt an unencrypted wallet with a password and save to disk
+    pub fn encrypt_wallet(&mut self, password: &str) -> Result<(), WalletDatError> {
+        self.wallet_dat.encrypt_with_password(password)?;
+        self.wallet_dat.save()?;
+        Ok(())
     }
 
     /// Update next_address_index based on existing addresses in the database

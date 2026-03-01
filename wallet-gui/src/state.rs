@@ -96,6 +96,11 @@ pub struct AppState {
     // -- Persisted send records (correct amounts from wallet, keyed by txid) --
     pub send_records: std::collections::HashMap<String, TransactionRecord>,
 
+    // -- Security --
+    pub wallet_encrypted: bool,
+    pub encrypt_password_input: String,
+    pub show_encrypt_dialog: bool,
+
     // -- Tools state --
     pub resync_in_progress: bool,
 }
@@ -146,6 +151,9 @@ impl Default for AppState {
             loading: false,
             decimal_places: 2,
             send_records: std::collections::HashMap::new(),
+            wallet_encrypted: true, // assume safe until proven otherwise
+            encrypt_password_input: String::new(),
+            show_encrypt_dialog: false,
             resync_in_progress: false,
         }
     }
@@ -186,11 +194,13 @@ impl AppState {
             ServiceEvent::WalletLoaded {
                 addresses,
                 is_testnet,
+                is_encrypted,
             } => {
                 self.wallet_loaded = true;
                 self.addresses = addresses;
                 self.selected_address = 0;
                 self.is_testnet = is_testnet;
+                self.wallet_encrypted = is_encrypted;
                 self.screen = Screen::Overview;
                 self.loading = false;
                 self.error = None;
@@ -270,7 +280,7 @@ impl AppState {
                 }
 
                 // Append locally-inserted send records if RPC had no send entry
-                // and synthesize fee line items from persisted send records
+                // and synthesize fee line items from send records or RPC fee data
                 for (txid, local_tx) in &local_sends {
                     let has_send = self.transactions.iter().any(|t| t.txid == *txid && t.is_send && !t.is_fee);
                     if !has_send {
@@ -293,6 +303,32 @@ impl AppState {
                                 is_change: false,
                             });
                         }
+                    }
+                }
+
+                // Synthesize fee line items from RPC fee data for sends
+                // that have no local send record (e.g., after resync)
+                let send_txids_with_fees: Vec<(String, u64, i64, TransactionStatus)> = self
+                    .transactions
+                    .iter()
+                    .filter(|t| t.is_send && !t.is_fee && t.fee > 0 && !local_sends.contains_key(&t.txid))
+                    .map(|t| (t.txid.clone(), t.fee, t.timestamp, t.status.clone()))
+                    .collect();
+                for (txid, fee, timestamp, status) in send_txids_with_fees {
+                    let has_fee = self.transactions.iter().any(|t| t.txid == txid && t.is_fee);
+                    if !has_fee {
+                        self.transactions.push(TransactionRecord {
+                            txid,
+                            vout: 0,
+                            is_send: true,
+                            address: "Network Fee".to_string(),
+                            amount: fee,
+                            fee: 0,
+                            timestamp,
+                            status,
+                            is_fee: true,
+                            is_change: false,
+                        });
                     }
                 }
 
@@ -458,6 +494,13 @@ impl AppState {
                 self.is_testnet = is_testnet;
                 self.screen = Screen::MnemonicSetup;
             }
+
+            ServiceEvent::WalletEncrypted => {
+                self.wallet_encrypted = true;
+                self.show_encrypt_dialog = false;
+                self.encrypt_password_input.clear();
+                self.success = Some("Wallet encrypted successfully".to_string());
+            }
         }
     }
 
@@ -485,6 +528,7 @@ mod tests {
                 label: "Address #0".to_string(),
             }],
             is_testnet: true,
+            is_encrypted: false,
         });
         assert!(state.wallet_loaded);
         assert_eq!(state.screen, Screen::Overview);

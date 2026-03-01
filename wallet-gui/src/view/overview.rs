@@ -76,6 +76,53 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
     ui.add_space(15.0);
 
+    // Security warning for unencrypted wallets
+    if state.wallet_loaded && !state.wallet_encrypted {
+        ui.group(|ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("⚠ Your wallet is not password-protected.")
+                        .color(egui::Color32::from_rgb(255, 165, 0))
+                        .strong(),
+                );
+                if ui.button("Set Password").clicked() {
+                    state.show_encrypt_dialog = true;
+                }
+            });
+        });
+
+        if state.show_encrypt_dialog {
+            ui.group(|ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label("Enter a password to encrypt your wallet:");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let pw = ui.add(
+                        egui::TextEdit::singleline(&mut state.encrypt_password_input)
+                            .password(true)
+                            .hint_text("Password")
+                            .desired_width(250.0),
+                    );
+                    if (pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        || ui.button("Encrypt").clicked())
+                        && !state.encrypt_password_input.is_empty()
+                    {
+                        let _ = ui_tx.send(UiEvent::EncryptWallet {
+                            password: state.encrypt_password_input.clone(),
+                        });
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_encrypt_dialog = false;
+                        state.encrypt_password_input.clear();
+                    }
+                });
+            });
+        }
+
+        ui.add_space(5.0);
+    }
+
     // Real-time notifications
     if !state.recent_notifications.is_empty() {
         ui.heading("Notifications");

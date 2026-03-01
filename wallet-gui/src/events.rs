@@ -73,6 +73,9 @@ pub enum UiEvent {
 
     /// Clean shutdown.
     Shutdown,
+
+    /// Encrypt an unencrypted wallet with the given password.
+    EncryptWallet { password: String },
 }
 
 /// Screens the wallet can display.
@@ -103,6 +106,7 @@ pub enum ServiceEvent {
     WalletLoaded {
         addresses: Vec<AddressInfo>,
         is_testnet: bool,
+        is_encrypted: bool,
     },
 
     /// New wallet created — pass mnemonic back for confirmation screen.
@@ -165,6 +169,9 @@ pub enum ServiceEvent {
 
     /// Network selected on first run — config saved, service reinitialized.
     NetworkConfigured { is_testnet: bool },
+
+    /// Wallet was successfully encrypted with a password.
+    WalletEncrypted,
 
     /// Resync completed — cache cleared, fresh data loaded.
     ResyncComplete,

@@ -287,12 +287,20 @@ impl MasternodeClient {
                     .unwrap_or("")
                     .to_string();
 
+                // RPC includes fee in the send amount — subtract it so we
+                // display only the actual transferred value.
+                let display_amount = if is_send && fee > 0 {
+                    amount.saturating_sub(fee)
+                } else {
+                    amount
+                };
+
                 Some(TransactionRecord {
                     txid,
                     vout,
                     is_send,
                     address,
-                    amount,
+                    amount: display_amount,
                     fee,
                     timestamp,
                     status,
