@@ -112,7 +112,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                     ui.visuals().window_fill
                 };
 
-                let frame_response = egui::Frame::group(ui.style()).fill(fill).show(ui, |ui| {
+                egui::Frame::group(ui.style()).fill(fill).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         // Radio button for selection
@@ -130,9 +130,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
                         ui.add_space(8.0);
 
-                        // Full address
+                        // Clickable address — selects this row
                         let addr = &state.addresses[i].address;
-                        ui.label(egui::RichText::new(addr).monospace());
+                        let addr_response = ui.add(
+                            egui::Label::new(egui::RichText::new(addr).monospace())
+                                .sense(egui::Sense::click()),
+                        );
+                        if addr_response.clicked() {
+                            state.selected_address = i;
+                        }
 
                         // Per-address balance (right-aligned with copy button)
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -152,14 +158,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         });
                     });
                 });
-                // Click anywhere on the row to select this address
-                if frame_response
-                    .response
-                    .interact(egui::Sense::click())
-                    .clicked()
-                {
-                    state.selected_address = i;
-                }
             }
 
             // Persist label changes
