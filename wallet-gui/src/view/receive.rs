@@ -134,11 +134,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         let addr = &state.addresses[i].address;
                         ui.label(egui::RichText::new(addr).monospace());
 
-                        // Copy button
+                        // Per-address balance (right-aligned with copy button)
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Copy").clicked() {
                                 ui.ctx().copy_text(state.addresses[i].address.clone());
                             }
+                            let bal = state.address_balance(addr);
+                            ui.label(
+                                egui::RichText::new(state.format_time(bal))
+                                    .monospace()
+                                    .color(if bal > 0 {
+                                        egui::Color32::from_rgb(0, 180, 0)
+                                    } else {
+                                        egui::Color32::GRAY
+                                    }),
+                            );
                         });
                     });
                 });
