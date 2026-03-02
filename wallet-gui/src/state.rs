@@ -220,23 +220,13 @@ impl AppState {
         bal.max(0) as u64
     }
 
-    /// Compute balance for a single address from the transaction list.
+    /// Compute balance for a single address from UTXOs.
     pub fn address_balance(&self, address: &str) -> u64 {
-        let mut bal: i64 = 0;
-        for tx in &self.transactions {
-            if matches!(tx.status, TransactionStatus::Declined) {
-                continue;
-            }
-            if tx.address != address {
-                continue;
-            }
-            if tx.is_send || tx.is_fee {
-                bal -= tx.amount as i64;
-            } else {
-                bal += tx.amount as i64;
-            }
-        }
-        bal.max(0) as u64
+        self.utxos
+            .iter()
+            .filter(|u| u.address == address)
+            .map(|u| u.amount)
+            .sum()
     }
 
     /// Format a satoshi amount as TIME with the user's preferred decimal places.
