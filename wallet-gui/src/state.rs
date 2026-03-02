@@ -229,6 +229,96 @@ impl AppState {
             .sum()
     }
 
+    /// Reconcile the transaction list against the UTXO set.
+    ///
+    /// When `computed_balance()` exceeds the UTXO total, there are phantom
+    /// receive entries in the transaction list (e.g. from stale WebSocket
+    /// notifications that were never backed by a real UTXO).
+    ///
+    /// This method finds unbacked, isolated receive entries whose removal
+    /// exactly reconciles the two balances, and removes them.  Returns `true`
+    /// if any entries were removed.
+    pub fn reconcile_transactions_with_utxos(&mut self) -> bool {
+        let utxo_total: u64 = self.utxos.iter().map(|u| u.amount).sum();
+        let computed = self.computed_balance();
+
+        if computed <= utxo_total || utxo_total == 0 {
+            return false;
+        }
+
+        let excess = computed - utxo_total;
+
+        // Build UTXO lookup by (txid, vout)
+        let utxo_keys: std::collections::HashSet<(&str, u32)> = self
+            .utxos
+            .iter()
+            .map(|u| (u.txid.as_str(), u.vout))
+            .collect();
+
+        // Count transaction entries per txid — isolated entries (count == 1)
+        // are not part of a send/receive/fee group and are more likely phantom.
+        let mut txid_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for tx in &self.transactions {
+            *txid_counts.entry(&tx.txid).or_insert(0) += 1;
+        }
+
+        // Collect candidate indices: unbacked, isolated, non-declined receives
+        let mut candidates: Vec<usize> = Vec::new();
+        for (i, tx) in self.transactions.iter().enumerate() {
+            if tx.is_send || tx.is_fee {
+                continue;
+            }
+            if matches!(tx.status, TransactionStatus::Declined) {
+                continue;
+            }
+            if utxo_keys.contains(&(tx.txid.as_str(), tx.vout)) {
+                continue; // backed by a real UTXO
+            }
+            let count = txid_counts.get(tx.txid.as_str()).copied().unwrap_or(0);
+            if count > 1 {
+                continue; // part of a send/receive group, likely legitimate
+            }
+            candidates.push(i);
+        }
+
+        // Greedily select candidates whose amounts sum to the excess
+        let mut to_remove: Vec<usize> = Vec::new();
+        let mut removed_total: u64 = 0;
+        for &i in &candidates {
+            let amt = self.transactions[i].amount;
+            if removed_total + amt <= excess {
+                to_remove.push(i);
+                removed_total += amt;
+            }
+            if removed_total == excess {
+                break;
+            }
+        }
+
+        if removed_total != excess {
+            log::warn!(
+                "Balance drift of {} sats could not be exactly reconciled \
+                 (found {} sats in {} phantom candidates)",
+                excess,
+                removed_total,
+                candidates.len()
+            );
+            return false;
+        }
+
+        for &i in to_remove.iter().rev() {
+            let tx = &self.transactions[i];
+            log::info!(
+                "🧹 Removing phantom receive: txid={}… amount={} sats",
+                &tx.txid[..16.min(tx.txid.len())],
+                tx.amount
+            );
+            self.transactions.remove(i);
+        }
+        true
+    }
+
     /// Format a satoshi amount as TIME with the user's preferred decimal places.
     pub fn format_time(&self, sats: u64) -> String {
         let time = sats as f64 / 100_000_000.0;
@@ -518,8 +608,13 @@ impl AppState {
                     }
                 }
 
-                // Append WS-only txs (dedup against existing entries)
+                // Append WS-only txs (dedup against existing entries).
+                // During resync, drop WS-only receives — the RPC is authoritative
+                // and keeping stale WS entries can introduce phantom balances.
                 for tx in ws_only.into_iter().rev() {
+                    if self.resync_in_progress && !tx.is_send && !tx.is_fee {
+                        continue;
+                    }
                     let dup = self.transactions.iter().any(|t| {
                         t.txid == tx.txid
                             && t.is_send == tx.is_send
@@ -561,6 +656,9 @@ impl AppState {
 
             ServiceEvent::UtxosUpdated(utxos) => {
                 self.utxos = utxos;
+                if self.reconcile_transactions_with_utxos() {
+                    log::info!("✅ Reconciled transaction list with UTXOs");
+                }
             }
 
             ServiceEvent::TransactionSent { txid } => {
@@ -817,5 +915,143 @@ mod tests {
         assert_eq!(state.recent_notifications.len(), 50);
         // First notification should be tx10 (0-9 were evicted)
         assert_eq!(state.recent_notifications[0].txid, "tx10");
+    }
+
+    #[test]
+    fn test_reconcile_removes_phantom_receive() {
+        let mut state = AppState::default();
+
+        // Simulate: 10.00 received, 1.00 sent + 0.01 fee, 1.00 phantom receive
+        state.transactions = vec![
+            TransactionRecord {
+                txid: "aaa".to_string(),
+                vout: 0,
+                is_send: false,
+                address: "TIME0addr".to_string(),
+                amount: 10_0000_0000,
+                fee: 0,
+                timestamp: 100,
+                status: TransactionStatus::Approved,
+                is_fee: false,
+                is_change: false,
+            },
+            TransactionRecord {
+                txid: "bbb".to_string(),
+                vout: 0,
+                is_send: true,
+                address: "TIME0other".to_string(),
+                amount: 1_0000_0000,
+                fee: 100_0000,
+                timestamp: 200,
+                status: TransactionStatus::Approved,
+                is_fee: false,
+                is_change: false,
+            },
+            TransactionRecord {
+                txid: "bbb".to_string(),
+                vout: 0,
+                is_send: true,
+                address: "Network Fee".to_string(),
+                amount: 100_0000,
+                fee: 0,
+                timestamp: 200,
+                status: TransactionStatus::Approved,
+                is_fee: true,
+                is_change: false,
+            },
+            // Phantom receive — no UTXO backs this
+            TransactionRecord {
+                txid: "phantom123".to_string(),
+                vout: 0,
+                is_send: false,
+                address: "TIME0addr".to_string(),
+                amount: 1_0000_0000,
+                fee: 0,
+                timestamp: 300,
+                status: TransactionStatus::Approved,
+                is_fee: false,
+                is_change: false,
+            },
+        ];
+
+        // UTXOs: only the change from the send (8.99 TIME)
+        state.utxos = vec![Utxo {
+            txid: "bbb".to_string(),
+            vout: 1,
+            amount: 8_9900_0000,
+            address: "TIME0addr".to_string(),
+            confirmations: 1,
+        }];
+
+        // computed_balance = 10 - 1 - 0.01 + 1 = 9.99
+        assert_eq!(state.computed_balance(), 9_9900_0000);
+        // UTXO total = 8.99
+        let utxo_total: u64 = state.utxos.iter().map(|u| u.amount).sum();
+        assert_eq!(utxo_total, 8_9900_0000);
+
+        // Reconcile should remove the phantom
+        assert!(state.reconcile_transactions_with_utxos());
+        assert_eq!(state.computed_balance(), 8_9900_0000);
+        assert_eq!(state.transactions.len(), 3);
+        assert!(!state.transactions.iter().any(|t| t.txid == "phantom123"));
+    }
+
+    #[test]
+    fn test_reconcile_keeps_legitimate_spent_receive() {
+        let mut state = AppState::default();
+
+        // 10.00 received (UTXO spent), then 9.99 change UTXO remains
+        // No phantom entries — should NOT remove the original receive
+        state.transactions = vec![
+            TransactionRecord {
+                txid: "original_recv".to_string(),
+                vout: 0,
+                is_send: false,
+                address: "TIME0addr".to_string(),
+                amount: 10_0000_0000,
+                fee: 0,
+                timestamp: 100,
+                status: TransactionStatus::Approved,
+                is_fee: false,
+                is_change: false,
+            },
+            TransactionRecord {
+                txid: "spend_tx".to_string(),
+                vout: 0,
+                is_send: true,
+                address: "TIME0other".to_string(),
+                amount: 100_0000,
+                fee: 100_0000,
+                timestamp: 200,
+                status: TransactionStatus::Approved,
+                is_fee: false,
+                is_change: false,
+            },
+            TransactionRecord {
+                txid: "spend_tx".to_string(),
+                vout: 0,
+                is_send: true,
+                address: "Network Fee".to_string(),
+                amount: 100_0000,
+                fee: 0,
+                timestamp: 200,
+                status: TransactionStatus::Approved,
+                is_fee: true,
+                is_change: false,
+            },
+        ];
+
+        state.utxos = vec![Utxo {
+            txid: "spend_tx".to_string(),
+            vout: 1,
+            amount: 9_9800_0000,
+            address: "TIME0addr".to_string(),
+            confirmations: 1,
+        }];
+
+        // computed = 10 - 0.01 - 0.01 = 9.98 = UTXO total → no reconciliation needed
+        assert_eq!(state.computed_balance(), 9_9800_0000);
+        assert!(!state.reconcile_transactions_with_utxos());
+        assert_eq!(state.transactions.len(), 3);
     }
 }
