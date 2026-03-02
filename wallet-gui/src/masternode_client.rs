@@ -327,6 +327,12 @@ impl MasternodeClient {
         let utxos: Vec<Utxo> = utxo_values
             .into_iter()
             .filter_map(|u| {
+                // Skip non-spendable UTXOs (locked by instant finality, collateral, etc.)
+                let spendable = u.get("spendable").and_then(|v| v.as_bool()).unwrap_or(true);
+                if !spendable {
+                    return None;
+                }
+
                 let txid = u.get("txid")?.as_str()?.to_string();
                 let vout = u.get("vout")?.as_u64()? as u32;
                 let amount = u.get("amount").map(json_to_satoshis).unwrap_or(0);

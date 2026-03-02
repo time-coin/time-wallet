@@ -87,6 +87,12 @@ impl eframe::App for App {
             let _ = self.ui_tx.send(UiEvent::ResyncWallet);
         }
 
+        // Persist any send records that changed status (e.g., Declined)
+        if !self.state.dirty_send_records.is_empty() {
+            let records = std::mem::take(&mut self.state.dirty_send_records);
+            let _ = self.ui_tx.send(UiEvent::PersistSendRecords(records));
+        }
+
         // 2. Navigation sidebar
         egui::SidePanel::left("nav").show(ctx, |ui| {
             ui.add_space(10.0);

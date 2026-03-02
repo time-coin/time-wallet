@@ -47,6 +47,14 @@ struct ClientMessage {
     params: serde_json::Value,
 }
 
+/// Notification that a transaction was rejected by the masternode
+#[derive(Clone, Debug, Deserialize)]
+pub struct TxRejectedNotification {
+    pub txid: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
 /// Events sent from the WebSocket client to the wallet UI
 #[derive(Clone, Debug)]
 pub enum WsEvent {
@@ -54,6 +62,8 @@ pub enum WsEvent {
     TransactionReceived(TxNotification),
     /// A UTXO has been finalized (locked by masternode consensus)
     UtxoFinalized(UtxoFinalizedNotification),
+    /// A transaction was rejected by the masternode
+    TransactionRejected(TxRejectedNotification),
     /// WebSocket connected successfully
     Connected(String),
     /// WebSocket disconnected
@@ -244,6 +254,23 @@ impl WsClient {
                 }
                 "subscribed" => {
                     log::info!("✅ Subscription confirmed: {:?}", msg.data);
+                }
+                "tx_rejected" => {
+                    if let Some(data) = msg.data {
+                        match serde_json::from_value::<TxRejectedNotification>(data) {
+                            Ok(notif) => {
+                                log::warn!(
+                                    "❌ Transaction rejected! txid: {}... reason: {}",
+                                    &notif.txid[..std::cmp::min(16, notif.txid.len())],
+                                    notif.reason
+                                );
+                                let _ = event_tx.send(WsEvent::TransactionRejected(notif));
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to parse tx_rejected: {}", e);
+                            }
+                        }
+                    }
                 }
                 "pong" => {
                     // Heartbeat response, ignore

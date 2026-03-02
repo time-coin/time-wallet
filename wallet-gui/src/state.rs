@@ -114,6 +114,10 @@ pub struct AppState {
     // -- Sync status --
     /// True while waiting for the first network poll after wallet load.
     pub syncing: bool,
+
+    // -- Pending DB writes --
+    /// Send records whose status changed and need to be persisted.
+    pub dirty_send_records: Vec<TransactionRecord>,
 }
 
 impl Default for AppState {
@@ -172,6 +176,7 @@ impl Default for AppState {
             show_encrypt_dialog: false,
             resync_in_progress: false,
             syncing: false,
+            dirty_send_records: Vec::new(),
         }
     }
 }
@@ -182,6 +187,9 @@ impl AppState {
     pub fn computed_balance(&self) -> u64 {
         let mut bal: i64 = 0;
         for tx in &self.transactions {
+            if matches!(tx.status, TransactionStatus::Declined) {
+                continue;
+            }
             if tx.is_send || tx.is_fee {
                 bal -= tx.amount as i64;
             } else {
@@ -284,11 +292,11 @@ impl AppState {
             }
 
             ServiceEvent::TransactionsUpdated(txs) => {
-                // Preserve Approved status: if a tx was already Approved (via WS finality),
-                // don't let a poll result downgrade it back to Pending
+                // Collect Approved txids from both old state and new RPC results
                 let approved_txids: std::collections::HashSet<String> = self
                     .transactions
                     .iter()
+                    .chain(txs.iter())
                     .filter(|t| matches!(t.status, TransactionStatus::Approved))
                     .map(|t| t.txid.clone())
                     .collect();
@@ -343,16 +351,32 @@ impl AppState {
                 }
 
                 // Append locally-inserted send records if RPC had no send entry
-                // and synthesize fee line items from send records or RPC fee data
+                // and synthesize fee line items from send records or RPC fee data.
+                // If the RPC has no record of a send at all (no send or receive
+                // entry), the masternode rejected it — mark as Declined.
+                let rpc_txids: std::collections::HashSet<String> =
+                    self.transactions.iter().map(|t| t.txid.clone()).collect();
+                let mut declined_txids: Vec<String> = Vec::new();
                 for (txid, local_tx) in &local_sends {
+                    let rpc_knows = rpc_txids.contains(txid.as_str());
                     let has_send = self.transactions.iter().any(|t| t.txid == *txid && t.is_send && !t.is_fee);
                     if !has_send {
-                        self.transactions.push(local_tx.clone());
+                        let mut record = local_tx.clone();
+                        if !rpc_knows && matches!(record.status, TransactionStatus::Pending) {
+                            record.status = TransactionStatus::Declined;
+                            declined_txids.push(txid.clone());
+                        }
+                        self.transactions.push(record);
                     }
                     // Ensure a fee line item exists for this send
                     if local_tx.fee > 0 {
                         let has_fee = self.transactions.iter().any(|t| t.txid == *txid && t.is_fee);
                         if !has_fee {
+                            let fee_status = if !rpc_knows && matches!(local_tx.status, TransactionStatus::Pending) {
+                                TransactionStatus::Declined
+                            } else {
+                                local_tx.status.clone()
+                            };
                             self.transactions.push(TransactionRecord {
                                 txid: txid.clone(),
                                 vout: 0,
@@ -361,11 +385,19 @@ impl AppState {
                                 amount: local_tx.fee,
                                 fee: 0,
                                 timestamp: local_tx.timestamp,
-                                status: local_tx.status.clone(),
+                                status: fee_status,
                                 is_fee: true,
                                 is_change: false,
                             });
                         }
+                    }
+                }
+
+                // Update persisted send records with Declined status
+                for txid in &declined_txids {
+                    if let Some(sr) = self.send_records.get_mut(txid) {
+                        sr.status = TransactionStatus::Declined;
+                        self.dirty_send_records.push(sr.clone());
                     }
                 }
 
@@ -424,6 +456,32 @@ impl AppState {
                 // Remove change outputs — they're internal and shouldn't be shown
                 self.transactions.retain(|t| !t.is_change);
 
+                // Synthesize missing receive entries for send-to-self transactions.
+                // The RPC may not return a separate "receive" for self-sends, and
+                // the real-time WebSocket entry is lost after restart.
+                for (txid, send_tx) in &local_sends {
+                    if !own_addrs.contains(send_tx.address.as_str()) {
+                        continue; // not a self-send
+                    }
+                    let has_receive = self.transactions.iter().any(|t| {
+                        t.txid == *txid && !t.is_send && !t.is_fee
+                    });
+                    if !has_receive {
+                        self.transactions.push(TransactionRecord {
+                            txid: txid.clone(),
+                            vout: 0,
+                            is_send: false,
+                            address: send_tx.address.clone(),
+                            amount: send_tx.amount,
+                            fee: 0,
+                            timestamp: send_tx.timestamp,
+                            status: send_tx.status.clone(),
+                            is_fee: false,
+                            is_change: false,
+                        });
+                    }
+                }
+
                 // Append WS-only txs (dedup against existing entries)
                 for tx in ws_only.into_iter().rev() {
                     let dup = self.transactions.iter().any(|t| {
@@ -444,9 +502,16 @@ impl AppState {
                     }
                 }
 
-                // Sort newest first
-                self.transactions
-                    .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                // Sort newest first; within the same timestamp, show
+                // receives before fees before sends (descending chronological).
+                self.transactions.sort_by(|a, b| {
+                    b.timestamp.cmp(&a.timestamp).then_with(|| {
+                        fn order(t: &TransactionRecord) -> u8 {
+                            if t.is_send && !t.is_fee { 2 } else if t.is_fee { 1 } else { 0 }
+                        }
+                        order(a).cmp(&order(b))
+                    })
+                });
             }
 
             ServiceEvent::UtxosUpdated(utxos) => {
@@ -485,17 +550,31 @@ impl AppState {
                     .any(|t| t.txid == tx.txid && t.is_fee == tx.is_fee && t.is_send == tx.is_send && t.vout == tx.vout);
                 if !exists {
                     self.transactions.push(tx);
-                    self.transactions
-                        .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                    self.transactions.sort_by(|a, b| {
+                        b.timestamp.cmp(&a.timestamp).then_with(|| {
+                            fn order(t: &TransactionRecord) -> u8 {
+                                if t.is_send && !t.is_fee { 2 } else if t.is_fee { 1 } else { 0 }
+                            }
+                            order(a).cmp(&order(b))
+                        })
+                    });
                 }
             }
 
             ServiceEvent::TransactionFinalityUpdated { txid, finalized } => {
+                let new_status = if finalized {
+                    TransactionStatus::Approved
+                } else {
+                    TransactionStatus::Declined
+                };
                 // Update all entries with this txid (including fee line items)
                 for tx in self.transactions.iter_mut().filter(|t| t.txid == txid) {
-                    if finalized {
-                        tx.status = TransactionStatus::Approved;
-                    }
+                    tx.status = new_status.clone();
+                }
+                // Persist updated status to send record so it survives restarts
+                if let Some(sr) = self.send_records.get_mut(&txid) {
+                    sr.status = new_status;
+                    self.dirty_send_records.push(sr.clone());
                 }
             }
 

@@ -657,18 +657,8 @@ pub async fn run(
                                 total: 0,
                             });
                         }
-                        // Clear in-memory state
-                        let _ = state.svc_tx.send(ServiceEvent::TransactionsUpdated(vec![]));
-                        let _ = state.svc_tx.send(ServiceEvent::UtxosUpdated(vec![]));
-                        let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(
-                            crate::masternode_client::Balance {
-                                confirmed: 0,
-                                pending: 0,
-                                total: 0,
-                            },
-                        ));
 
-                        // Re-fetch everything from masternode
+                        // Re-fetch everything from masternode before updating UI
                         if let Some(ref client) = state.client {
                             if !state.addresses.is_empty() {
                                 match client.get_transactions_multi(&state.addresses, 200).await {
@@ -686,6 +676,15 @@ pub async fn run(
                                             format!("Resync failed: {}", e),
                                         ));
                                     }
+                                }
+                                match client.get_balances(&state.addresses).await {
+                                    Ok(bal) => {
+                                        if let Some(ref db) = state.wallet_db {
+                                            let _ = db.save_cached_balance(&bal);
+                                        }
+                                        let _ = state.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
+                                    }
+                                    Err(e) => log::warn!("Resync balance fetch failed: {}", e),
                                 }
                                 let mut all_utxos = Vec::new();
                                 for addr in &state.addresses {
@@ -726,6 +725,14 @@ pub async fn run(
                             let _ = state.svc_tx.send(ServiceEvent::Error(
                                 "No wallet loaded".to_string(),
                             ));
+                        }
+                    }
+
+                    UiEvent::PersistSendRecords(records) => {
+                        if let Some(ref db) = state.wallet_db {
+                            for record in &records {
+                                let _ = db.save_send_record(record);
+                            }
                         }
                     }
                 }
@@ -837,6 +844,13 @@ pub async fn run(
                     }
                     WsEvent::Disconnected(_) => {
                         let _ = state.svc_tx.send(ServiceEvent::WsDisconnected);
+                    }
+                    WsEvent::TransactionRejected(notif) => {
+                        log::warn!("❌ Transaction {} rejected: {}", &notif.txid[..16.min(notif.txid.len())], notif.reason);
+                        let _ = state.svc_tx.send(ServiceEvent::TransactionFinalityUpdated {
+                            txid: notif.txid,
+                            finalized: false,
+                        });
                     }
                 }
             }

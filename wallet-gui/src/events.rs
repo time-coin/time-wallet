@@ -76,6 +76,9 @@ pub enum UiEvent {
 
     /// Encrypt an unencrypted wallet with the given password.
     EncryptWallet { password: String },
+
+    /// Persist updated send records to the database.
+    PersistSendRecords(Vec<TransactionRecord>),
 }
 
 /// Screens the wallet can display.

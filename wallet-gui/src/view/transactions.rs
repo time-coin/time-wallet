@@ -27,7 +27,7 @@ fn show_detail(ui: &mut Ui, state: &mut AppState, idx: usize) {
     let tx = &state.transactions[idx];
 
     ui.horizontal(|ui| {
-        if ui.button("← Back").clicked() {
+        if ui.button("Back").clicked() {
             state.selected_transaction = None;
         }
         ui.heading("Transaction Details");
