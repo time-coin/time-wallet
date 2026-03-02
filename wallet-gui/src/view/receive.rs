@@ -112,7 +112,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                     ui.visuals().window_fill
                 };
 
-                egui::Frame::group(ui.style()).fill(fill).show(ui, |ui| {
+                let frame_response = egui::Frame::group(ui.style()).fill(fill).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         // Radio button for selection
@@ -152,6 +152,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         });
                     });
                 });
+                // Click anywhere on the row to select this address
+                if frame_response
+                    .response
+                    .interact(egui::Sense::click())
+                    .clicked()
+                {
+                    state.selected_address = i;
+                }
             }
 
             // Persist label changes
