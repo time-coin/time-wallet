@@ -339,7 +339,10 @@ mod tests {
         let mut proof = compute_vdf(input, iterations).unwrap();
 
         // Tamper with checkpoint
-        assert!(!proof.checkpoints.is_empty(), "need checkpoints to test tampering");
+        assert!(
+            !proof.checkpoints.is_empty(),
+            "need checkpoints to test tampering"
+        );
         proof.checkpoints[0] = "deadbeef".to_string();
 
         let result = verify_vdf(input, &proof);

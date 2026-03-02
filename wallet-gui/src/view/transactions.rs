@@ -185,7 +185,10 @@ fn show_list(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<Ui
             }
             tx.address.to_lowercase().contains(&search)
                 || tx.txid.to_lowercase().contains(&search)
-                || state.format_time(tx.amount).to_lowercase().contains(&search)
+                || state
+                    .format_time(tx.amount)
+                    .to_lowercase()
+                    .contains(&search)
                 || state
                     .contact_name(&tx.address)
                     .map(|n| n.to_lowercase().contains(&search))

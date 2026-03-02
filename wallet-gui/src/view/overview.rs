@@ -64,18 +64,25 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             );
             ui.add_space(4.0);
 
-            let total = state.computed_balance();
-            let confirmed = state.confirmed_balance();
-            let pending = total.saturating_sub(confirmed);
+            if state.syncing {
+                ui.label(
+                    egui::RichText::new("Syncing...")
+                        .size(32.0)
+                        .strong()
+                        .color(egui::Color32::GRAY),
+                );
+            } else {
+                let total = state.computed_balance();
+                let confirmed = state.confirmed_balance();
+                let pending = total.saturating_sub(confirmed);
 
-            ui.label(
-                egui::RichText::new(state.format_time(total))
-                    .size(32.0)
-                    .strong(),
-            );
+                ui.label(
+                    egui::RichText::new(state.format_time(total))
+                        .size(32.0)
+                        .strong(),
+                );
 
-            ui.add_space(4.0);
-            if !state.syncing {
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label(format!("Confirmed: {}", state.format_time(confirmed)));
                     ui.add_space(20.0);

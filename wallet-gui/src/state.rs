@@ -74,11 +74,13 @@ pub struct AppState {
     pub send_address: String,
     pub send_amount: String,
     pub send_fee: String,
+    pub send_include_fee: bool,
     pub contacts: Vec<ContactInfo>,
     pub new_contact_name: String,
     pub new_contact_address: String,
     pub show_add_contact: bool,
     pub contact_search: String,
+    pub receive_search: String,
     pub editing_contact_address: Option<String>,
     pub editing_contact_name: String,
     pub password_required: bool,
@@ -147,11 +149,13 @@ impl Default for AppState {
             send_address: String::new(),
             send_amount: String::new(),
             send_fee: String::new(),
+            send_include_fee: false,
             contacts: Vec::new(),
             new_contact_name: String::new(),
             new_contact_address: String::new(),
             show_add_contact: false,
             contact_search: String::new(),
+            receive_search: String::new(),
             editing_contact_address: None,
             editing_contact_name: String::new(),
             password_required: false,
@@ -307,18 +311,24 @@ impl AppState {
                 let mut local_sends = self.send_records.clone();
                 for t in &self.transactions {
                     if t.is_send && !t.is_fee && t.fee > 0 {
-                        local_sends.entry(t.txid.clone()).or_insert_with(|| t.clone());
+                        local_sends
+                            .entry(t.txid.clone())
+                            .or_insert_with(|| t.clone());
                     }
                 }
 
                 // Keep fee line items (never come from RPC) and WS-injected
                 // receive records not already covered by RPC results
-                let rpc_keys: std::collections::HashSet<(String, bool, u32)> =
-                    txs.iter().map(|t| (t.txid.clone(), t.is_send, t.vout)).collect();
+                let rpc_keys: std::collections::HashSet<(String, bool, u32)> = txs
+                    .iter()
+                    .map(|t| (t.txid.clone(), t.is_send, t.vout))
+                    .collect();
                 let ws_only: Vec<_> = self
                     .transactions
                     .iter()
-                    .filter(|t| t.is_fee || !rpc_keys.contains(&(t.txid.clone(), t.is_send, t.vout)))
+                    .filter(|t| {
+                        t.is_fee || !rpc_keys.contains(&(t.txid.clone(), t.is_send, t.vout))
+                    })
                     .cloned()
                     .collect();
 
@@ -359,7 +369,10 @@ impl AppState {
                 let mut declined_txids: Vec<String> = Vec::new();
                 for (txid, local_tx) in &local_sends {
                     let rpc_knows = rpc_txids.contains(txid.as_str());
-                    let has_send = self.transactions.iter().any(|t| t.txid == *txid && t.is_send && !t.is_fee);
+                    let has_send = self
+                        .transactions
+                        .iter()
+                        .any(|t| t.txid == *txid && t.is_send && !t.is_fee);
                     if !has_send {
                         let mut record = local_tx.clone();
                         if !rpc_knows && matches!(record.status, TransactionStatus::Pending) {
@@ -370,9 +383,14 @@ impl AppState {
                     }
                     // Ensure a fee line item exists for this send
                     if local_tx.fee > 0 {
-                        let has_fee = self.transactions.iter().any(|t| t.txid == *txid && t.is_fee);
+                        let has_fee = self
+                            .transactions
+                            .iter()
+                            .any(|t| t.txid == *txid && t.is_fee);
                         if !has_fee {
-                            let fee_status = if !rpc_knows && matches!(local_tx.status, TransactionStatus::Pending) {
+                            let fee_status = if !rpc_knows
+                                && matches!(local_tx.status, TransactionStatus::Pending)
+                            {
                                 TransactionStatus::Declined
                             } else {
                                 local_tx.status.clone()
@@ -406,7 +424,9 @@ impl AppState {
                 let send_txids_with_fees: Vec<(String, u64, i64, TransactionStatus)> = self
                     .transactions
                     .iter()
-                    .filter(|t| t.is_send && !t.is_fee && t.fee > 0 && !local_sends.contains_key(&t.txid))
+                    .filter(|t| {
+                        t.is_send && !t.is_fee && t.fee > 0 && !local_sends.contains_key(&t.txid)
+                    })
                     .map(|t| (t.txid.clone(), t.fee, t.timestamp, t.status.clone()))
                     .collect();
                 for (txid, fee, timestamp, status) in send_txids_with_fees {
@@ -434,15 +454,21 @@ impl AppState {
                     self.addresses.iter().map(|a| a.address.as_str()).collect();
                 let sent_txids: std::collections::HashSet<&str> =
                     local_sends.keys().map(|s| s.as_str()).collect();
-                let mut kept_self_receive: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut kept_self_receive: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for tx in &mut self.transactions {
-                    if !tx.is_send && !tx.is_fee
+                    if !tx.is_send
+                        && !tx.is_fee
                         && sent_txids.contains(tx.txid.as_str())
                         && own_addrs.contains(tx.address.as_str())
                     {
                         // Check if this is a send-to-self receive (amount matches send)
-                        let is_self_receive = local_sends.get(&tx.txid)
-                            .map(|send| own_addrs.contains(send.address.as_str()) && tx.amount == send.amount)
+                        let is_self_receive = local_sends
+                            .get(&tx.txid)
+                            .map(|send| {
+                                own_addrs.contains(send.address.as_str())
+                                    && tx.amount == send.amount
+                            })
                             .unwrap_or(false);
                         if is_self_receive && !kept_self_receive.contains(&tx.txid) {
                             kept_self_receive.insert(tx.txid.clone());
@@ -463,9 +489,10 @@ impl AppState {
                     if !own_addrs.contains(send_tx.address.as_str()) {
                         continue; // not a self-send
                     }
-                    let has_receive = self.transactions.iter().any(|t| {
-                        t.txid == *txid && !t.is_send && !t.is_fee
-                    });
+                    let has_receive = self
+                        .transactions
+                        .iter()
+                        .any(|t| t.txid == *txid && !t.is_send && !t.is_fee);
                     if !has_receive {
                         self.transactions.push(TransactionRecord {
                             txid: txid.clone(),
@@ -485,7 +512,10 @@ impl AppState {
                 // Append WS-only txs (dedup against existing entries)
                 for tx in ws_only.into_iter().rev() {
                     let dup = self.transactions.iter().any(|t| {
-                        t.txid == tx.txid && t.is_send == tx.is_send && t.is_fee == tx.is_fee && t.vout == tx.vout
+                        t.txid == tx.txid
+                            && t.is_send == tx.is_send
+                            && t.is_fee == tx.is_fee
+                            && t.vout == tx.vout
                     });
                     if !dup {
                         self.transactions.insert(0, tx);
@@ -507,7 +537,13 @@ impl AppState {
                 self.transactions.sort_by(|a, b| {
                     b.timestamp.cmp(&a.timestamp).then_with(|| {
                         fn order(t: &TransactionRecord) -> u8 {
-                            if t.is_send && !t.is_fee { 2 } else if t.is_fee { 1 } else { 0 }
+                            if t.is_send && !t.is_fee {
+                                2
+                            } else if t.is_fee {
+                                1
+                            } else {
+                                0
+                            }
                         }
                         order(a).cmp(&order(b))
                     })
@@ -523,6 +559,7 @@ impl AppState {
                 self.send_address.clear();
                 self.send_amount.clear();
                 self.send_fee.clear();
+                self.send_include_fee = false;
                 self.loading = false;
             }
 
@@ -541,19 +578,29 @@ impl AppState {
                 }
                 // Track locally-inserted send records in memory
                 if tx.is_send && !tx.is_fee && tx.fee > 0 {
-                    self.send_records.entry(tx.txid.clone()).or_insert_with(|| tx.clone());
+                    self.send_records
+                        .entry(tx.txid.clone())
+                        .or_insert_with(|| tx.clone());
                 }
                 // Insert if not already present; dedup by (txid, is_send, is_fee, vout)
-                let exists = self
-                    .transactions
-                    .iter()
-                    .any(|t| t.txid == tx.txid && t.is_fee == tx.is_fee && t.is_send == tx.is_send && t.vout == tx.vout);
+                let exists = self.transactions.iter().any(|t| {
+                    t.txid == tx.txid
+                        && t.is_fee == tx.is_fee
+                        && t.is_send == tx.is_send
+                        && t.vout == tx.vout
+                });
                 if !exists {
                     self.transactions.push(tx);
                     self.transactions.sort_by(|a, b| {
                         b.timestamp.cmp(&a.timestamp).then_with(|| {
                             fn order(t: &TransactionRecord) -> u8 {
-                                if t.is_send && !t.is_fee { 2 } else if t.is_fee { 1 } else { 0 }
+                                if t.is_send && !t.is_fee {
+                                    2
+                                } else if t.is_fee {
+                                    1
+                                } else {
+                                    0
+                                }
                             }
                             order(a).cmp(&order(b))
                         })
@@ -603,7 +650,8 @@ impl AppState {
             ServiceEvent::ReadyForMnemonic { backed_up_path } => {
                 self.backed_up_path = backed_up_path;
                 self.mnemonic_input.clear();
-                self.mnemonic_words = vec![String::new(); if self.mnemonic_use_24 { 24 } else { 12 }];
+                self.mnemonic_words =
+                    vec![String::new(); if self.mnemonic_use_24 { 24 } else { 12 }];
                 self.mnemonic_valid = None;
                 self.new_wallet_password.clear();
                 self.screen = Screen::MnemonicSetup;
@@ -662,7 +710,6 @@ impl AppState {
             }
         }
     }
-
 }
 
 #[cfg(test)]

@@ -1023,6 +1023,15 @@ impl ServiceState {
     fn finish_wallet_init(&mut self, result: Result<WalletManager, wallet_dat::WalletDatError>) {
         match result {
             Ok(mut wm) => {
+                // Sync address index from DB so all generated addresses are restored
+                if let Some(ref db) = self.wallet_db {
+                    if let Ok(owned) = db.get_owned_addresses() {
+                        if let Some(max_idx) = owned.iter().filter_map(|c| c.derivation_index).max()
+                        {
+                            wm.sync_address_index(max_idx);
+                        }
+                    }
+                }
                 let raw_addrs = derive_addresses(&mut wm);
                 self.addresses = raw_addrs.clone();
                 let address_infos: Vec<AddressInfo> = raw_addrs
@@ -1051,22 +1060,52 @@ impl ServiceState {
 
                 // Load cached data from database for instant startup
                 if let Some(ref db) = self.wallet_db {
-                    // Load persisted send records FIRST so they're available for merge
-                    if let Ok(send_records) = db.get_send_records() {
+                    // Load persisted send records FIRST so they're available for merge.
+                    // Cross-reference with cached transactions: if a send record's
+                    // txid isn't in the cache, the masternode rejected it.
+                    let cached_txs = db.get_cached_transactions().unwrap_or_default();
+                    let cached_txids: std::collections::HashSet<&str> =
+                        cached_txs.iter().map(|t| t.txid.as_str()).collect();
+
+                    if let Ok(mut send_records) = db.get_send_records() {
+                        let mut updated = Vec::new();
+                        for (txid, sr) in send_records.iter_mut() {
+                            if matches!(
+                                sr.status,
+                                crate::masternode_client::TransactionStatus::Pending
+                            ) && !cached_txids.contains(txid.as_str())
+                            {
+                                log::info!(
+                                    "Marking send record {} as Declined (not in cached txs)",
+                                    &txid[..16.min(txid.len())]
+                                );
+                                sr.status = crate::masternode_client::TransactionStatus::Declined;
+                                updated.push(sr.clone());
+                            }
+                        }
+                        // Persist the Declined status immediately
+                        for sr in &updated {
+                            let _ = db.save_send_record(sr);
+                        }
                         if !send_records.is_empty() {
                             log::info!("Loaded {} persisted send records", send_records.len());
-                            let _ = self.svc_tx.send(ServiceEvent::SendRecordsLoaded(send_records));
+                            let _ = self
+                                .svc_tx
+                                .send(ServiceEvent::SendRecordsLoaded(send_records));
                         }
                     }
                     if let Ok(Some(bal)) = db.get_cached_balance() {
                         log::info!("Loaded cached balance from database");
                         let _ = self.svc_tx.send(ServiceEvent::BalanceUpdated(bal));
                     }
-                    if let Ok(txs) = db.get_cached_transactions() {
-                        if !txs.is_empty() {
-                            log::info!("Loaded {} cached transactions from database", txs.len());
-                            let _ = self.svc_tx.send(ServiceEvent::TransactionsUpdated(txs));
-                        }
+                    if !cached_txs.is_empty() {
+                        log::info!(
+                            "Loaded {} cached transactions from database",
+                            cached_txs.len()
+                        );
+                        let _ = self
+                            .svc_tx
+                            .send(ServiceEvent::TransactionsUpdated(cached_txs));
                     }
                     // Load external contacts for send address book
                     if let Ok(contacts) = db.get_external_contacts() {

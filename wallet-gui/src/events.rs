@@ -171,7 +171,9 @@ pub enum ServiceEvent {
     Error(String),
 
     /// Network selected on first run — config saved, service reinitialized.
-    NetworkConfigured { is_testnet: bool },
+    NetworkConfigured {
+        is_testnet: bool,
+    },
 
     /// Wallet was successfully encrypted with a password.
     WalletEncrypted,

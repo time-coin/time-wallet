@@ -56,9 +56,10 @@ fn show_network_select(ui: &mut Ui, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
         let button_size = egui::vec2(260.0, 50.0);
 
         if ui
-            .add(egui::Button::new(
-                egui::RichText::new("🌐 Mainnet").size(18.0),
-            ).min_size(button_size))
+            .add(
+                egui::Button::new(egui::RichText::new("🌐 Mainnet").size(18.0))
+                    .min_size(button_size),
+            )
             .clicked()
         {
             let _ = ui_tx.send(UiEvent::SelectNetwork {
@@ -74,9 +75,10 @@ fn show_network_select(ui: &mut Ui, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
         ui.add_space(16.0);
 
         if ui
-            .add(egui::Button::new(
-                egui::RichText::new("🧪 Testnet").size(18.0),
-            ).min_size(button_size))
+            .add(
+                egui::Button::new(egui::RichText::new("🧪 Testnet").size(18.0))
+                    .min_size(button_size),
+            )
             .clicked()
         {
             let _ = ui_tx.send(UiEvent::SelectNetwork {
@@ -195,11 +197,7 @@ fn show_welcome(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender
 }
 
 /// Mnemonic setup screen — enter an existing mnemonic or generate a new one.
-fn show_mnemonic_setup(
-    ui: &mut Ui,
-    state: &mut AppState,
-    ui_tx: &mpsc::UnboundedSender<UiEvent>,
-) {
+fn show_mnemonic_setup(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
     let word_count = if state.mnemonic_use_24 { 24 } else { 12 };
 
     // Print dialog (modal window)
@@ -210,7 +208,11 @@ fn show_mnemonic_setup(
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(30.0);
-            ui.heading(egui::RichText::new("Set Up Your Wallet").size(24.0).strong());
+            ui.heading(
+                egui::RichText::new("Set Up Your Wallet")
+                    .size(24.0)
+                    .strong(),
+            );
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new("Enter an existing recovery phrase or generate a new one.")
@@ -234,10 +236,8 @@ fn show_mnemonic_setup(
             ui.horizontal(|ui| {
                 if ui
                     .add(
-                        egui::Button::new(
-                            egui::RichText::new("Generate Random Phrase").size(14.0),
-                        )
-                        .min_size(egui::vec2(200.0, 34.0)),
+                        egui::Button::new(egui::RichText::new("Generate Random Phrase").size(14.0))
+                            .min_size(egui::vec2(200.0, 34.0)),
                     )
                     .clicked()
                 {
@@ -283,7 +283,10 @@ fn show_mnemonic_setup(
 
             // Word count toggle
             if ui
-                .checkbox(&mut state.mnemonic_use_24, "Use 24 words (advanced security)")
+                .checkbox(
+                    &mut state.mnemonic_use_24,
+                    "Use 24 words (advanced security)",
+                )
                 .changed()
             {
                 let new_count = if state.mnemonic_use_24 { 24 } else { 12 };
@@ -582,13 +585,9 @@ fn render_print_dialog(ctx: &egui::Context, state: &mut AppState) {
                             }
                             if let Some(word) = words.get(i + mid) {
                                 ui.label(
-                                    egui::RichText::new(format!(
-                                        "{:>2}. {}",
-                                        i + mid + 1,
-                                        word
-                                    ))
-                                    .monospace()
-                                    .size(14.0),
+                                    egui::RichText::new(format!("{:>2}. {}", i + mid + 1, word))
+                                        .monospace()
+                                        .size(14.0),
                                 );
                             }
                             ui.end_row();
@@ -622,16 +621,22 @@ fn render_print_dialog(ctx: &egui::Context, state: &mut AppState) {
                         Ok(path) => {
                             log::info!("Paper backup PDF opened for printing: {}", path.display());
                             let _ = open::that(&path);
-                            state.success =
-                                Some("Paper backup opened — use your PDF viewer to print".to_string());
+                            state.success = Some(
+                                "Paper backup opened — use your PDF viewer to print".to_string(),
+                            );
                             // Securely delete the PDF after a delay
                             let cleanup_path = path.clone();
                             std::thread::spawn(move || {
                                 std::thread::sleep(std::time::Duration::from_secs(60));
                                 if cleanup_path.exists() {
                                     // Overwrite with zeros before deleting
-                                    if let Ok(len) = std::fs::metadata(&cleanup_path).map(|m| m.len()) {
-                                        if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&cleanup_path) {
+                                    if let Ok(len) =
+                                        std::fs::metadata(&cleanup_path).map(|m| m.len())
+                                    {
+                                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                                            .write(true)
+                                            .open(&cleanup_path)
+                                        {
                                             use std::io::Write;
                                             let zeros = vec![0u8; len as usize];
                                             let _ = f.write_all(&zeros);

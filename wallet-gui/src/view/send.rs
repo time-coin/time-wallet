@@ -81,17 +81,38 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                         .desired_width(200.0),
                 );
             });
+            ui.add_space(10.0);
+            ui.checkbox(&mut state.send_include_fee, "Include fee in amount");
         });
 
         ui.add_space(8.0);
 
         // Auto-calculate tiered fee (matches masternode consensus rule)
-        let send_amount = parse_time_amount(&state.send_amount);
-        let available = state.computed_balance();
-        let auto_fee = if send_amount > 0 {
-            wallet::calculate_fee(send_amount)
-        } else {
+        let entered_amount = parse_time_amount(&state.send_amount);
+        let available = if state.syncing {
             0
+        } else {
+            state.computed_balance()
+        };
+
+        // When "include fee" is checked, the entered amount is the total to deduct.
+        // The actual send amount is entered minus fee, and fee is calculated on the send amount.
+        // Solve: send + fee(send) = entered  →  iterate to find send.
+        let (send_amount, auto_fee) = if state.send_include_fee && entered_amount > 0 {
+            let mut send = entered_amount;
+            for _ in 0..10 {
+                let fee = wallet::calculate_fee(send);
+                if send + fee <= entered_amount {
+                    break;
+                }
+                send = entered_amount.saturating_sub(fee);
+            }
+            let fee = wallet::calculate_fee(send);
+            (send, fee)
+        } else if entered_amount > 0 {
+            (entered_amount, wallet::calculate_fee(entered_amount))
+        } else {
+            (0, 0)
         };
         if send_amount > 0 {
             let fee_pct = if send_amount < 100 * 100_000_000 {
@@ -112,23 +133,47 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                 ))
                 .color(egui::Color32::GRAY),
             );
+            if state.send_include_fee {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Recipient receives: {}.{:06} TIME",
+                        send_amount / 100_000_000,
+                        (send_amount % 100_000_000) / 100,
+                    ))
+                    .color(egui::Color32::GRAY),
+                );
+            }
         }
 
         ui.add_space(4.0);
 
         // Available balance and insufficient funds check
-        let total_cost = send_amount.saturating_add(auto_fee);
+        let total_cost = if state.send_include_fee {
+            entered_amount
+        } else {
+            send_amount.saturating_add(auto_fee)
+        };
         let insufficient = send_amount > 0 && total_cost > available;
 
+        let bal_color = if insufficient {
+            egui::Color32::RED
+        } else {
+            egui::Color32::GRAY
+        };
+        let bal_text = format!(
+            "Available: {}.{:06} TIME",
+            available / 100_000_000,
+            (available % 100_000_000) / 100
+        );
+        if ui
+            .link(egui::RichText::new(&bal_text).color(bal_color))
+            .clicked()
+        {
+            let whole = available / 100_000_000;
+            let frac = (available % 100_000_000) / 100;
+            state.send_amount = format!("{}.{:06}", whole, frac);
+        }
         if insufficient {
-            ui.label(
-                egui::RichText::new(format!(
-                    "Available: {}.{:06} TIME",
-                    available / 100_000_000,
-                    (available % 100_000_000) / 100
-                ))
-                .color(egui::Color32::RED),
-            );
             ui.colored_label(
                 egui::Color32::RED,
                 format!(
@@ -136,15 +181,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                     total_cost / 100_000_000,
                     (total_cost % 100_000_000) / 100
                 ),
-            );
-        } else {
-            ui.label(
-                egui::RichText::new(format!(
-                    "Available: {}.{:06} TIME",
-                    available / 100_000_000,
-                    (available % 100_000_000) / 100
-                ))
-                .color(egui::Color32::GRAY),
             );
         }
 

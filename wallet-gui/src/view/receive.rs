@@ -77,6 +77,19 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
     );
     ui.add_space(8.0);
 
+    // Search filter
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.receive_search)
+                .desired_width(250.0)
+                .hint_text("Filter by label or address..."),
+        );
+    });
+    ui.add_space(8.0);
+
+    let search = state.receive_search.to_lowercase();
+
     // Address list
     egui::ScrollArea::vertical()
         .max_height(400.0)
@@ -84,6 +97,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             let mut label_updates = Vec::new();
 
             for i in 0..state.addresses.len() {
+                // Filter by search term
+                if !search.is_empty() {
+                    let label_match = state.addresses[i].label.to_lowercase().contains(&search);
+                    let addr_match = state.addresses[i].address.to_lowercase().contains(&search);
+                    if !label_match && !addr_match {
+                        continue;
+                    }
+                }
                 let is_selected = i == state.selected_address;
                 let fill = if is_selected {
                     ui.visuals().selection.bg_fill
@@ -109,14 +130,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
 
                         ui.add_space(8.0);
 
-                        // Truncated address
+                        // Full address
                         let addr = &state.addresses[i].address;
-                        let display = if addr.len() > 24 {
-                            format!("{}..{}", &addr[..14], &addr[addr.len() - 8..])
-                        } else {
-                            addr.clone()
-                        };
-                        ui.label(egui::RichText::new(display).monospace());
+                        ui.label(egui::RichText::new(addr).monospace());
 
                         // Copy button
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

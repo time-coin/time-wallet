@@ -152,7 +152,10 @@ impl eframe::App for App {
 
         // 3. Central panel — route to the active view
         egui::CentralPanel::default().show(ctx, |ui| match self.state.screen {
-            Screen::Welcome | Screen::NetworkSelect | Screen::MnemonicSetup | Screen::MnemonicConfirm => {
+            Screen::Welcome
+            | Screen::NetworkSelect
+            | Screen::MnemonicSetup
+            | Screen::MnemonicConfirm => {
                 view::welcome::show(ui, &mut self.state, &self.ui_tx);
             }
             Screen::Overview => {

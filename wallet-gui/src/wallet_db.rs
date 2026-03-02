@@ -461,13 +461,21 @@ impl WalletDb {
     /// Load all persisted send records (keyed by txid).
     pub fn get_send_records(
         &self,
-    ) -> Result<std::collections::HashMap<String, crate::masternode_client::TransactionRecord>, WalletDbError> {
+    ) -> Result<
+        std::collections::HashMap<String, crate::masternode_client::TransactionRecord>,
+        WalletDbError,
+    > {
         let mut map = std::collections::HashMap::new();
         for item in self.db.scan_prefix(b"send_record:") {
             let (key, value) = item?;
             let key_str = String::from_utf8_lossy(&key);
-            let txid = key_str.strip_prefix("send_record:").unwrap_or("").to_string();
-            if let Ok(tx) = bincode::deserialize::<crate::masternode_client::TransactionRecord>(&value) {
+            let txid = key_str
+                .strip_prefix("send_record:")
+                .unwrap_or("")
+                .to_string();
+            if let Ok(tx) =
+                bincode::deserialize::<crate::masternode_client::TransactionRecord>(&value)
+            {
                 map.insert(txid, tx);
             }
         }
