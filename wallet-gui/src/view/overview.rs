@@ -64,23 +64,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
             );
             ui.add_space(4.0);
 
-            if state.syncing {
-                ui.label(
-                    egui::RichText::new("Syncing...")
-                        .size(32.0)
-                        .strong()
-                        .color(egui::Color32::GRAY),
-                );
-            } else {
+            {
                 let total = state.computed_balance();
                 let confirmed = state.confirmed_balance();
                 let pending = total.saturating_sub(confirmed);
 
-                ui.label(
-                    egui::RichText::new(state.format_time(total))
-                        .size(32.0)
-                        .strong(),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(state.format_time(total))
+                            .size(32.0)
+                            .strong(),
+                    );
+                    if state.syncing {
+                        ui.spinner();
+                    }
+                });
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -88,8 +86,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                     ui.add_space(20.0);
                     if pending > 0 {
                         ui.label(
-                            egui::RichText::new(format!("Pending: {}", state.format_time(pending)))
-                                .color(egui::Color32::from_rgb(255, 165, 0)),
+                            egui::RichText::new(format!(
+                                "Pending: {}",
+                                state.format_time(pending)
+                            ))
+                            .color(egui::Color32::from_rgb(255, 165, 0)),
                         );
                     }
                 });
