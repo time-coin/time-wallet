@@ -53,6 +53,9 @@ pub struct PeerInfo {
     pub tier: Option<String>,
     /// True when the masternode is still performing initial block download.
     pub is_syncing: bool,
+    /// None = genesis not yet verified; Some(true) = genesis matches this network;
+    /// Some(false) = incompatible genesis (different chain — never auto-select).
+    pub genesis_ok: Option<bool>,
 }
 
 /// Information about a wallet address with its user-assigned label.

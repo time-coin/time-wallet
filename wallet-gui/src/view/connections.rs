@@ -81,10 +81,12 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                     );
                     ui.end_row();
 
-                    // Determine best (highest) block height for consensus check
+                    // Determine best (highest) block height for consensus check.
+                    // Exclude wrong-chain peers so their bogus heights don't distort the view.
                     let best_height = state
                         .peers
                         .iter()
+                        .filter(|p| p.genesis_ok != Some(false))
                         .filter_map(|p| p.block_height)
                         .max()
                         .unwrap_or(0);
@@ -137,7 +139,13 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                         }
 
                         // Status
-                        if peer.is_active && peer.is_syncing {
+                        if peer.genesis_ok == Some(false) {
+                            ui.colored_label(egui::Color32::RED, "Wrong chain")
+                                .on_hover_text(
+                                    "This peer is on a different blockchain (genesis mismatch). \
+                                     It cannot be used with this wallet.",
+                                );
+                        } else if peer.is_active && peer.is_syncing {
                             ui.colored_label(egui::Color32::from_rgb(255, 180, 0), "Syncing")
                                 .on_hover_text(
                                     "This masternode is still downloading the blockchain. \
@@ -186,8 +194,10 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                             ui.colored_label(egui::Color32::GRAY, "--");
                         }
 
-                        // Select / deselect link
-                        if peer.is_active {
+                        // Select / deselect link — never shown for wrong-chain peers
+                        if peer.genesis_ok == Some(false) {
+                            ui.label("");
+                        } else if peer.is_active {
                             let link = ui.add(
                                 egui::Label::new(
                                     egui::RichText::new("selected")
@@ -217,7 +227,11 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                         ui.with_layout(
                             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                             |ui| {
-                                if best_height == 0 {
+                                if peer.genesis_ok == Some(false) {
+                                    ui.colored_label(egui::Color32::RED, "✗").on_hover_text(
+                                        "Incompatible genesis block — different chain",
+                                    );
+                                } else if best_height == 0 {
                                     ui.colored_label(egui::Color32::GRAY, "--");
                                 } else {
                                     let height = peer.block_height.unwrap_or(0);
@@ -230,7 +244,7 @@ pub fn show(ui: &mut Ui, state: &AppState, ui_tx: &mpsc::UnboundedSender<UiEvent
                                             ),
                                         );
                                     } else {
-                                        ui.colored_label(egui::Color32::RED, "X").on_hover_text(
+                                        ui.colored_label(egui::Color32::RED, "✗").on_hover_text(
                                             format!(
                                                 "{} blocks behind consensus height {}",
                                                 lag, best_height

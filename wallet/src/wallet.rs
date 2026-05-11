@@ -522,7 +522,7 @@ impl Wallet {
 
         // Select UTXOs greedily, largest-first to minimise input count and tx size.
         let mut sorted_utxos = self.utxos.clone();
-        sorted_utxos.sort_unstable_by(|a, b| b.amount.cmp(&a.amount));
+        sorted_utxos.sort_unstable_by_key(|u| std::cmp::Reverse(u.amount));
 
         let mut input_amount = 0u64;
         let mut selected_utxos = Vec::new();

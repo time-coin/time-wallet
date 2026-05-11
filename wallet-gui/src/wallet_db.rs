@@ -143,7 +143,7 @@ impl WalletDb {
             let _ = self.save_contact(&contact);
         }
 
-        contacts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        contacts.sort_by_key(|c| std::cmp::Reverse(c.updated_at));
         Ok(contacts)
     }
 
@@ -233,7 +233,7 @@ impl WalletDb {
             transactions.push(tx);
         }
 
-        transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        transactions.sort_by_key(|t| std::cmp::Reverse(t.timestamp));
         Ok(transactions)
     }
 
@@ -392,7 +392,7 @@ impl WalletDb {
             }
         }
 
-        peers.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        peers.sort_by_key(|p| std::cmp::Reverse(p.last_seen));
         Ok(peers)
     }
 
@@ -798,7 +798,7 @@ impl WalletDb {
                 }
             }
         }
-        reqs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        reqs.sort_by_key(|r| std::cmp::Reverse(r.created_at));
         Ok(reqs)
     }
 
@@ -862,7 +862,7 @@ impl WalletDb {
                 }
             }
         }
-        reqs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        reqs.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
         Ok(reqs)
     }
 
@@ -915,7 +915,7 @@ impl WalletDb {
                 ),
             }
         }
-        entries.sort_by(|a, b| b.completed_at.cmp(&a.completed_at));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.completed_at));
         Ok(entries)
     }
 

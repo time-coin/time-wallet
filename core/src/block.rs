@@ -651,9 +651,7 @@ pub fn create_coinbase_transaction(
 
     if !masternode_list.is_empty() && masternode_total > 0 {
         let total_weight = counts.total_weight();
-        if total_weight > 0 {
-            let per_weight = masternode_total / total_weight;
-
+        if let Some(per_weight) = masternode_total.checked_div(total_weight) {
             // Distribute to each masternode based on their tier weight
             for (address, tier) in &masternode_list {
                 let reward = per_weight * tier.weight();

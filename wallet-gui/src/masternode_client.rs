@@ -336,7 +336,7 @@ impl MasternodeClient {
         }
 
         // Sort newest-first (mirrors single-call ordering).
-        all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        all.sort_by_key(|t| std::cmp::Reverse(t.timestamp));
         Ok(TransactionBatch {
             transactions: all,
             chain_height: max_chain_height,
@@ -832,6 +832,17 @@ impl MasternodeClient {
             peer_count
         );
         Ok(status)
+    }
+
+    /// Fetch the hex-encoded hash of block 0 (the genesis block).
+    pub async fn get_genesis_hash(&self) -> Result<String, ClientError> {
+        let result = self
+            .rpc_call("getblockhash", serde_json::json!([0u64]))
+            .await?;
+        result
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| ClientError::InvalidResponse("getblockhash returned non-string".to_string()))
     }
 
     /// Attempt to determine this masternode's tier.

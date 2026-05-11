@@ -29,6 +29,13 @@ type DiscoveryHandle = tokio::task::JoinHandle<Result<(String, Vec<PeerInfo>), (
 /// it is considered out of consensus and rejected as an active connection.
 const CONSENSUS_LAG: u64 = 3;
 
+/// Canonical genesis block hashes.  Any peer whose block-0 hash differs from
+/// the expected value is on an incompatible chain and must never be used.
+const MAINNET_GENESIS_HASH: &str =
+    "45181d4c65a3a2bcc2215d037267bee4cc2248f21764466846d2b7218b601ce5";
+const TESTNET_GENESIS_HASH: &str =
+    "b9523431d4e59a1b41d757a8c0f01ed023c11123761b1455e4644ef9d5599ff6";
+
 /// Run the service loop until the cancellation token fires.
 ///
 /// This is the **only** `tokio::spawn`ed task in the application. It owns the
@@ -1764,12 +1771,47 @@ pub async fn run(
                     UiEvent::SwitchPeer { endpoint } => {
                         log::info!("📌 User manually switching to peer: {}", endpoint);
 
+                        // Genesis guard: reject peers on a different chain.
+                        {
+                            let expected = if state.network_type == NetworkType::Testnet {
+                                TESTNET_GENESIS_HASH
+                            } else {
+                                MAINNET_GENESIS_HASH
+                            };
+                            let probe = MasternodeClient::new(endpoint.clone(), rpc_credentials.clone());
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                probe.get_genesis_hash(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(hash)) if hash != expected => {
+                                    log::warn!(
+                                        "⚠ Refusing switch to {}: incompatible genesis {}…",
+                                        endpoint,
+                                        &hash[..16.min(hash.len())],
+                                    );
+                                    let _ = state.svc_tx.send(ServiceEvent::Error(format!(
+                                        "Peer {} is on a different chain (genesis mismatch). Choose a compatible peer.",
+                                        endpoint
+                                    )));
+                                    continue;
+                                }
+                                Ok(Err(e)) => {
+                                    log::warn!("⚠ Cannot check genesis for {}: {}", endpoint, e);
+                                    // Don't block the switch on a failed genesis check.
+                                }
+                                _ => {}
+                            }
+                        }
+
                         // Consensus guard: compare the target peer's height to the best
                         // known height across all discovered peers. Reject the switch if
                         // the target lags by more than CONSENSUS_LAG blocks.
                         let best_known = state
                             .last_peers
                             .iter()
+                            .filter(|p| p.genesis_ok != Some(false))
                             .filter_map(|p| p.block_height)
                             .max()
                             .unwrap_or(0);
@@ -2828,6 +2870,7 @@ async fn discover_peers(
     let mut handles = Vec::new();
     for endpoint in endpoints.clone() {
         let creds = rpc_credentials.clone();
+        let expected_genesis = if is_testnet { TESTNET_GENESIS_HASH } else { MAINNET_GENESIS_HASH };
         handles.push(tokio::spawn(async move {
             // Always probe the https:// form first; plain-http form is the fallback.
             let https_ep = if endpoint.starts_with("http://") {
@@ -2928,6 +2971,34 @@ async fn discover_peers(
                 None
             };
 
+            // Genesis check: confirm this peer is on the same chain before trusting it.
+            // None = check failed or timed out (benefit of the doubt); Some(false) = wrong chain.
+            let genesis_ok = if is_healthy {
+                let gc = MasternodeClient::new(working_ep.clone(), creds.clone());
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    gc.get_genesis_hash(),
+                )
+                .await
+                {
+                    Ok(Ok(hash)) => {
+                        let ok = hash == expected_genesis;
+                        if !ok {
+                            log::warn!(
+                                "⚠ Peer {} has incompatible genesis: {} (expected {}…)",
+                                working_ep,
+                                &hash[..16.min(hash.len())],
+                                &expected_genesis[..16],
+                            );
+                        }
+                        Some(ok)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
             PeerInfo {
                 endpoint: working_ep,
                 is_active: false,
@@ -2938,6 +3009,7 @@ async fn discover_peers(
                 block_height,
                 version,
                 tier,
+                genesis_ok,
             }
         }));
     }
@@ -2983,8 +3055,23 @@ async fn discover_peers(
             )
     });
 
-    // Keep only healthy peers; cap if max_connections is set below usize::MAX
-    peer_infos.retain(|p| p.is_healthy);
+    // Save wrong-chain peers before healthy-only filtering so the connections
+    // screen can display them with a "Wrong chain" warning. They are excluded from
+    // auto-selection and must never be used as the active endpoint.
+    let wrong_chain_display: Vec<PeerInfo> = peer_infos
+        .iter()
+        .filter(|p| p.is_healthy && p.genesis_ok == Some(false))
+        .cloned()
+        .collect();
+    for p in &wrong_chain_display {
+        log::warn!(
+            "⚠ Peer {} has incompatible genesis — excluded from active pool",
+            p.endpoint
+        );
+    }
+
+    // Keep only healthy peers on the correct chain.
+    peer_infos.retain(|p| p.is_healthy && p.genesis_ok != Some(false));
 
     // Consensus filter: discard peers whose block height lags the best known
     // height by more than CONSENSUS_LAG blocks. A lagging node has a stale UTXO
@@ -3077,6 +3164,7 @@ async fn discover_peers(
         let mut gossip_handles = Vec::new();
         for ep in new_endpoints {
             let creds = rpc_credentials.clone();
+            let expected_genesis = if is_testnet { TESTNET_GENESIS_HASH } else { MAINNET_GENESIS_HASH };
             gossip_handles.push(tokio::spawn(async move {
                 // Gossip peers are built as https://; fall back to http:// like the initial probe.
                 let http_ep = ep.replacen("https://", "http://", 1);
@@ -3160,6 +3248,30 @@ async fn discover_peers(
                 } else {
                     None
                 };
+                let genesis_ok = if is_healthy {
+                    let gc = MasternodeClient::new(working_ep.clone(), creds.clone());
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        gc.get_genesis_hash(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(hash)) => {
+                            let ok = hash == expected_genesis;
+                            if !ok {
+                                log::warn!(
+                                    "⚠ Gossip peer {} has incompatible genesis: {}…",
+                                    working_ep,
+                                    &hash[..16.min(hash.len())],
+                                );
+                            }
+                            Some(ok)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 PeerInfo {
                     endpoint: working_ep,
                     is_active: false,
@@ -3170,6 +3282,7 @@ async fn discover_peers(
                     block_height,
                     version,
                     tier,
+                    genesis_ok,
                 }
             }));
         }
@@ -3177,6 +3290,13 @@ async fn discover_peers(
             if let Ok(info) = handle.await {
                 if !info.is_healthy {
                     continue; // Don't bother adding unhealthy gossip peers
+                }
+                if info.genesis_ok == Some(false) {
+                    log::warn!(
+                        "⚠ Gossip peer {} has incompatible genesis — skipping",
+                        info.endpoint
+                    );
+                    continue;
                 }
                 log::info!(
                     "✅ Gossip peer {} is healthy ({}ms)",
@@ -3235,6 +3355,10 @@ async fn discover_peers(
     for p in &mut peer_infos {
         p.is_active = p.is_healthy && p.endpoint == active_endpoint;
     }
+
+    // Append wrong-chain peers for UI display. They are excluded from the active
+    // pool but visible in the connections screen with a "Wrong chain" indicator.
+    peer_infos.extend(wrong_chain_display);
 
     Ok((active_endpoint, peer_infos))
 }
