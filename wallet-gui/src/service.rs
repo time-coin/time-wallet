@@ -2899,88 +2899,83 @@ async fn discover_peers(
                 None
             };
 
-            let (is_healthy, is_syncing, block_height, version, working_ep) = if tcp_ok {
-                // Try HTTPS first
-                let client = MasternodeClient::new(https_ep.clone(), creds.clone());
-                match tokio::time::timeout(probe_timeout, client.health_check()).await {
-                    Ok(Ok(health)) => (
-                        true,
-                        health.is_syncing,
-                        Some(health.block_height),
-                        Some(health.version),
-                        https_ep.clone(),
-                    ),
-                    _ => {
-                        // HTTPS failed — retry with plain HTTP (masternode auto-detects)
-                        log::debug!("HTTPS failed for {}, retrying with HTTP", https_ep);
-                        let http_client = MasternodeClient::new(http_ep.clone(), creds.clone());
-                        match tokio::time::timeout(probe_timeout, http_client.health_check()).await
-                        {
-                            Ok(Ok(health)) => {
-                                log::info!("✅ Peer {} reachable via HTTP (no TLS)", http_ep);
-                                (
-                                    true,
-                                    health.is_syncing,
-                                    Some(health.block_height),
-                                    Some(health.version),
-                                    http_ep.clone(),
-                                )
-                            }
-                            Ok(Err(e)) => {
-                                log::warn!("⚠ Peer {} unhealthy: {}", http_ep, e);
-                                (false, false, None, None, endpoint.clone())
-                            }
-                            Err(_) => {
-                                log::warn!("⚠ Peer {} timed out", http_ep);
-                                (false, false, None, None, endpoint.clone())
+            // Health check — capture the working client so tier/genesis can reuse
+            // the same TCP+TLS connection (avoids two extra handshakes per peer).
+            let (is_healthy, is_syncing, block_height, version, working_ep, probe_client) =
+                if tcp_ok {
+                    let client = MasternodeClient::new(https_ep.clone(), creds.clone());
+                    match tokio::time::timeout(probe_timeout, client.health_check()).await {
+                        Ok(Ok(health)) => (
+                            true,
+                            health.is_syncing,
+                            Some(health.block_height),
+                            Some(health.version),
+                            https_ep.clone(),
+                            Some(client),
+                        ),
+                        _ => {
+                            log::debug!("HTTPS failed for {}, retrying with HTTP", https_ep);
+                            let http_client = MasternodeClient::new(http_ep.clone(), creds.clone());
+                            match tokio::time::timeout(probe_timeout, http_client.health_check())
+                                .await
+                            {
+                                Ok(Ok(health)) => {
+                                    log::info!("✅ Peer {} reachable via HTTP (no TLS)", http_ep);
+                                    (
+                                        true,
+                                        health.is_syncing,
+                                        Some(health.block_height),
+                                        Some(health.version),
+                                        http_ep.clone(),
+                                        Some(http_client),
+                                    )
+                                }
+                                Ok(Err(e)) => {
+                                    log::warn!("⚠ Peer {} unhealthy: {}", http_ep, e);
+                                    (false, false, None, None, endpoint.clone(), None)
+                                }
+                                Err(_) => {
+                                    log::warn!("⚠ Peer {} timed out", http_ep);
+                                    (false, false, None, None, endpoint.clone(), None)
+                                }
                             }
                         }
                     }
-                }
-            } else {
-                (false, false, None, None, endpoint.clone())
-            };
+                } else {
+                    (false, false, None, None, endpoint.clone(), None)
+                };
 
-            // Probe WebSocket connectivity (WS port = RPC port + 1)
-            let ws_available = if is_healthy {
+            // WS probe + tier + genesis run in parallel — all independent of each other
+            // and all reuse the same reqwest connection pool from probe_client (one
+            // TLS handshake total instead of three).
+            let (ws_available, tier, genesis_ok) = if let Some(client) = probe_client {
                 let ws_url = crate::config_new::Config::derive_ws_url(&working_ep);
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(3),
-                    tokio_tungstenite::connect_async_tls_with_config(
-                        &ws_url,
-                        None,
-                        false,
-                        Some(crate::ws_client::make_tls_connector()),
+                let tier_client = client.clone();
+                let genesis_client = client.clone();
+
+                let (ws_res, tier_res, genesis_res) = tokio::join!(
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        tokio_tungstenite::connect_async_tls_with_config(
+                            &ws_url,
+                            None,
+                            false,
+                            Some(crate::ws_client::make_tls_connector()),
+                        ),
                     ),
-                )
-                .await
-                .map(|r| r.is_ok())
-                .unwrap_or(false)
-            } else {
-                false
-            };
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        tier_client.get_tier(),
+                    ),
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        async move { genesis_client.get_genesis_hash().await },
+                    ),
+                );
 
-            // Best-effort tier query — non-blocking, ignored on failure
-            let tier = if is_healthy {
-                let tier_client = MasternodeClient::new(working_ep.clone(), creds.clone());
-                tokio::time::timeout(std::time::Duration::from_secs(5), tier_client.get_tier())
-                    .await
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-
-            // Genesis check: confirm this peer is on the same chain before trusting it.
-            // None = check failed or timed out (benefit of the doubt); Some(false) = wrong chain.
-            let genesis_ok = if is_healthy {
-                let gc = MasternodeClient::new(working_ep.clone(), creds.clone());
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(3),
-                    gc.get_genesis_hash(),
-                )
-                .await
-                {
+                let ws_available = ws_res.map(|r| r.is_ok()).unwrap_or(false);
+                let tier = tier_res.ok().flatten();
+                let genesis_ok = match genesis_res {
                     Ok(Ok(hash)) => {
                         let ok = hash == expected_genesis;
                         if !ok {
@@ -2994,9 +2989,10 @@ async fn discover_peers(
                         Some(ok)
                     }
                     _ => None,
-                }
+                };
+                (ws_available, tier, genesis_ok)
             } else {
-                None
+                (false, None, None)
             };
 
             PeerInfo {
@@ -3111,6 +3107,17 @@ async fn discover_peers(
             endpoints[0].clone()
         });
 
+    // Send a preliminary peer update immediately so the UI stops showing
+    // "discovering peers" and shows the initial set while gossip runs.
+    {
+        let mut preliminary = peer_infos.clone();
+        for p in &mut preliminary {
+            p.is_active = p.is_healthy && p.endpoint == active_endpoint;
+        }
+        preliminary.extend(wrong_chain_display.iter().cloned());
+        let _ = svc_tx.send(ServiceEvent::PeersDiscovered(preliminary));
+    }
+
     // Gossip discovery: ask ALL healthy peers for their known masternodes.
     // Querying only one peer means a stale registry on that node hides others.
     // Normalise to "ip:rpc_port" for dedup — ignore http/https scheme differences.
@@ -3188,74 +3195,76 @@ async fn discover_peers(
                     None
                 };
 
-                let (is_healthy, is_syncing, block_height, version, working_ep) = if tcp_ok {
-                    let c = MasternodeClient::new(ep.clone(), creds.clone());
-                    match tokio::time::timeout(probe_timeout2, c.health_check()).await {
-                        Ok(Ok(health)) => (
-                            true,
-                            health.is_syncing,
-                            Some(health.block_height),
-                            Some(health.version),
-                            ep.clone(),
-                        ),
-                        _ => {
-                            log::debug!("HTTPS failed for gossip peer {}, retrying with HTTP", ep);
-                            let hc = MasternodeClient::new(http_ep.clone(), creds.clone());
-                            match tokio::time::timeout(probe_timeout2, hc.health_check()).await {
-                                Ok(Ok(health)) => {
-                                    log::info!(
-                                        "✅ Gossip peer {} reachable via HTTP (no TLS)",
-                                        http_ep
-                                    );
-                                    (
-                                        true,
-                                        health.is_syncing,
-                                        Some(health.block_height),
-                                        Some(health.version),
-                                        http_ep.clone(),
-                                    )
+                let (is_healthy, is_syncing, block_height, version, working_ep, probe_client) =
+                    if tcp_ok {
+                        let c = MasternodeClient::new(ep.clone(), creds.clone());
+                        match tokio::time::timeout(probe_timeout2, c.health_check()).await {
+                            Ok(Ok(health)) => (
+                                true,
+                                health.is_syncing,
+                                Some(health.block_height),
+                                Some(health.version),
+                                ep.clone(),
+                                Some(c),
+                            ),
+                            _ => {
+                                log::debug!(
+                                    "HTTPS failed for gossip peer {}, retrying with HTTP",
+                                    ep
+                                );
+                                let hc = MasternodeClient::new(http_ep.clone(), creds.clone());
+                                match tokio::time::timeout(probe_timeout2, hc.health_check()).await
+                                {
+                                    Ok(Ok(health)) => {
+                                        log::info!(
+                                            "✅ Gossip peer {} reachable via HTTP (no TLS)",
+                                            http_ep
+                                        );
+                                        (
+                                            true,
+                                            health.is_syncing,
+                                            Some(health.block_height),
+                                            Some(health.version),
+                                            http_ep.clone(),
+                                            Some(hc),
+                                        )
+                                    }
+                                    _ => (false, false, None, None, ep.clone(), None),
                                 }
-                                _ => (false, false, None, None, ep.clone()),
                             }
                         }
-                    }
-                } else {
-                    (false, false, None, None, ep.clone())
-                };
-                let ws_available = if is_healthy {
+                    } else {
+                        (false, false, None, None, ep.clone(), None)
+                    };
+
+                let (ws_available, tier, genesis_ok) = if let Some(client) = probe_client {
                     let ws_url = crate::config_new::Config::derive_ws_url(&working_ep);
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        tokio_tungstenite::connect_async_tls_with_config(
-                            &ws_url,
-                            None,
-                            false,
-                            Some(crate::ws_client::make_tls_connector()),
+                    let tier_client = client.clone();
+                    let genesis_client = client.clone();
+
+                    let (ws_res, tier_res, genesis_res) = tokio::join!(
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            tokio_tungstenite::connect_async_tls_with_config(
+                                &ws_url,
+                                None,
+                                false,
+                                Some(crate::ws_client::make_tls_connector()),
+                            ),
                         ),
-                    )
-                    .await
-                    .map(|r| r.is_ok())
-                    .unwrap_or(false)
-                } else {
-                    false
-                };
-                let tier = if is_healthy {
-                    let tier_client = MasternodeClient::new(working_ep.clone(), creds.clone());
-                    tokio::time::timeout(std::time::Duration::from_secs(5), tier_client.get_tier())
-                        .await
-                        .ok()
-                        .flatten()
-                } else {
-                    None
-                };
-                let genesis_ok = if is_healthy {
-                    let gc = MasternodeClient::new(working_ep.clone(), creds.clone());
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        gc.get_genesis_hash(),
-                    )
-                    .await
-                    {
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            tier_client.get_tier(),
+                        ),
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            async move { genesis_client.get_genesis_hash().await },
+                        ),
+                    );
+
+                    let ws_available = ws_res.map(|r| r.is_ok()).unwrap_or(false);
+                    let tier = tier_res.ok().flatten();
+                    let genesis_ok = match genesis_res {
                         Ok(Ok(hash)) => {
                             let ok = hash == expected_genesis;
                             if !ok {
@@ -3268,9 +3277,10 @@ async fn discover_peers(
                             Some(ok)
                         }
                         _ => None,
-                    }
+                    };
+                    (ws_available, tier, genesis_ok)
                 } else {
-                    None
+                    (false, None, None)
                 };
                 PeerInfo {
                     endpoint: working_ep,
