@@ -228,13 +228,17 @@ pub async fn run(
                                 bal_client.get_balances(&bal_addrs),
                                 tx_client.get_transactions_multi(&tx_addrs, 0, from_height),
                                 async {
-                                    let mut all = Vec::new();
-                                    for addr in &utxo_addrs {
-                                        if let Ok(utxos) = utxo_client.get_utxos(addr).await {
-                                            all.extend(utxos);
-                                        }
-                                    }
-                                    all
+                                    // Fetch UTXOs for all addresses in parallel.
+                                    let futs: Vec<_> = utxo_addrs.iter().map(|addr| {
+                                        let c = utxo_client.clone();
+                                        let a = addr.clone();
+                                        async move { c.get_utxos(&a).await.ok() }
+                                    }).collect();
+                                    futures_util::future::join_all(futs).await
+                                        .into_iter()
+                                        .flatten()
+                                        .flatten()
+                                        .collect::<Vec<_>>()
                                 },
                             );
 
@@ -420,6 +424,9 @@ pub async fn run(
                             // Backfill any masternode entries that are still missing their
                             // collateral amount — resolves the UTXO directly from the node.
                             mn_backfill_via_gettxout(&state.client, &state.wallet_db, &state.svc_tx).await;
+                            // Force a full heavy sync on the very next poll tick so transactions
+                            // and UTXOs update immediately rather than waiting up to 10 s.
+                            poll_tick = 0;
                         }
                     }
 

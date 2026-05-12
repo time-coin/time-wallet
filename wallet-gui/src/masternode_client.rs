@@ -4,6 +4,7 @@
 //! The masternode exposes an axum-based HTTP server on the RPC port
 //! (24101 for testnet, 24001 for mainnet).
 
+use futures_util::future::join_all;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -297,40 +298,44 @@ impl MasternodeClient {
             return Self::parse_transaction_batch(result);
         }
 
-        // Slow path — send in chunks and merge.
+        // Slow path — send all chunks in parallel and merge.
+        let chunk_futs: Vec<_> = addresses
+            .chunks(CHUNK_SIZE)
+            .map(|chunk| {
+                let c = self.clone();
+                let chunk = chunk.to_vec();
+                async move {
+                    c.rpc_call(
+                        "listtransactionsmulti",
+                        serde_json::json!([chunk, limit, from_height]),
+                    )
+                    .await
+                    .and_then(Self::parse_transaction_batch)
+                }
+            })
+            .collect();
+
+        let chunk_results = join_all(chunk_futs).await;
+
         let mut all: Vec<TransactionRecord> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut max_chain_height: u64 = 0;
 
-        for chunk in addresses.chunks(CHUNK_SIZE) {
-            let result = self
-                .rpc_call(
-                    "listtransactionsmulti",
-                    serde_json::json!([chunk, limit, from_height]),
-                )
-                .await;
-
+        for result in chunk_results {
             match result {
-                Ok(data) => {
-                    if let Ok(batch) = Self::parse_transaction_batch(data) {
-                        if batch.chain_height > max_chain_height {
-                            max_chain_height = batch.chain_height;
-                        }
-                        for r in batch.transactions {
-                            let key = (r.txid.clone(), r.is_send, r.vout);
-                            if seen.insert(key) {
-                                all.push(r);
-                            }
+                Ok(batch) => {
+                    if batch.chain_height > max_chain_height {
+                        max_chain_height = batch.chain_height;
+                    }
+                    for r in batch.transactions {
+                        let key = (r.txid.clone(), r.is_send, r.vout);
+                        if seen.insert(key) {
+                            all.push(r);
                         }
                     }
                 }
                 Err(e) => {
-                    log::warn!(
-                        "listtransactionsmulti chunk ({} addrs) failed: {}",
-                        chunk.len(),
-                        e
-                    );
-                    // Continue with remaining chunks rather than aborting entirely.
+                    log::warn!("listtransactionsmulti chunk failed: {}", e);
                 }
             }
         }
