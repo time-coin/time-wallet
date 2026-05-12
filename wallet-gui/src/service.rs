@@ -262,6 +262,11 @@ pub async fn run(
                                         new_txs: txs,
                                         chain_height,
                                     });
+                                    // First incremental poll after loading from cache —
+                                    // mark sync done so payment-request polling can start.
+                                    if !heavy_initial_sync_done.load(Ordering::Relaxed) {
+                                        heavy_initial_sync_done.store(true, Ordering::Relaxed);
+                                    }
                                 } else {
                                     // First load: full replace + cache.
                                     if let Some(ref db) = heavy_db {
@@ -275,8 +280,16 @@ pub async fn run(
                                 }
 
                                 // Advance the watermark so the next poll is incremental.
+                                // Also persist it so a fresh start resumes from here
+                                // instead of rescanning the full chain.
                                 if chain_height > 0 {
                                     heavy_last_synced.store(chain_height, Ordering::Relaxed);
+                                    if let Some(ref db) = heavy_db {
+                                        let _ = db.save_setting(
+                                            "last_synced_height",
+                                            &chain_height.to_string(),
+                                        );
+                                    }
                                 }
                             }
 
@@ -3702,6 +3715,20 @@ impl ServiceState {
                         let _ = self
                             .svc_tx
                             .send(ServiceEvent::TransactionsUpdated(cached_txs));
+
+                        // We have cached history — restore the last-synced block height
+                        // so the first live poll is incremental (new blocks only) instead
+                        // of a full chain rescan from height 0.
+                        if let Ok(Some(h_str)) = db.get_setting("last_synced_height") {
+                            if let Ok(h) = h_str.parse::<u64>() {
+                                self.last_synced_height.store(h, Ordering::Relaxed);
+                                log::info!("Resuming incremental sync from block {}", h);
+                            }
+                        }
+
+                        // Hide the "Synchronizing" banner immediately — cached data is
+                        // displayed, and the incremental live sync runs in the background.
+                        let _ = self.svc_tx.send(ServiceEvent::SyncComplete);
                     }
                     // Load persisted UTXOs so balance displays correctly before sync
                     if let Ok(utxo_records) = db.get_all_utxos() {
