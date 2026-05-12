@@ -2308,9 +2308,25 @@ pub async fn run(
                         if let (Some(ref client), Some(ref mut wm)) =
                             (&state.client, &mut state.wallet)
                         {
+                            // Look up the collateral UTXO's owner address from the
+                            // DB so we can sign with the correct key.
+                            let collateral_owner_addr: Option<String> = state
+                                .wallet_db
+                                .as_ref()
+                                .and_then(|db| db.get_all_utxos().ok())
+                                .and_then(|utxos| {
+                                    utxos
+                                        .into_iter()
+                                        .find(|u| {
+                                            u.tx_hash == collateral_txid
+                                                && u.output_index == collateral_vout
+                                        })
+                                        .map(|u| u.address)
+                                });
                             match build_collateral_unlock_tx(
                                 wm,
                                 &state.addresses,
+                                collateral_owner_addr.as_deref(),
                                 &collateral_txid,
                                 collateral_vout,
                                 &masternode_ip,
@@ -4099,6 +4115,7 @@ async fn build_masternode_reg_tx(
 async fn build_collateral_unlock_tx(
     wm: &mut WalletManager,
     addresses: &[String],
+    collateral_owner_addr: Option<&str>,
     collateral_txid: &str,
     collateral_vout: u32,
     masternode_ip: &str,
@@ -4111,11 +4128,27 @@ async fn build_collateral_unlock_tx(
         .filter_map(|i| wm.derive_address(i).ok().map(|a| (a, i)))
         .collect();
 
-    // Find the first wallet-owned address from the provided list
-    let collateral_hd_index = addresses
-        .iter()
-        .find_map(|addr| addr_to_index.get(addr).copied())
-        .ok_or("No wallet address found to sign deregistration".to_string())?;
+    // Prefer the address that actually owns the collateral UTXO.
+    // The masternode validates that the signing key matches the UTXO's on-chain
+    // owner address — using a different key will always fail with OwnerMismatch.
+    let collateral_hd_index = if let Some(owner) = collateral_owner_addr {
+        // Use the key that owns this specific UTXO.
+        addr_to_index
+            .get(owner)
+            .copied()
+            .ok_or_else(|| format!(
+                "Collateral UTXO owner address {} is not in this wallet — \
+                 cannot sign deregistration",
+                owner
+            ))?
+    } else {
+        // Owner address not in the DB yet (UTXO not yet synced).
+        // Fall back to the first known wallet address and let the node validate.
+        addresses
+            .iter()
+            .find_map(|addr| addr_to_index.get(addr).copied())
+            .ok_or("No wallet address found to sign deregistration".to_string())?
+    };
 
     let collateral_kp = wm
         .derive_keypair(collateral_hd_index)

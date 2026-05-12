@@ -367,7 +367,11 @@ pub fn render(
                         }
 
                         let reg_open = state.mn_reg_alias.as_deref() == Some(&entry.alias);
-                        if entry.reg_txid.is_some() {
+                        // Show Deregister when either this wallet registered the node
+                        // (reg_txid stored) OR when the live UTXO set confirms the
+                        // collateral is still locked on-chain (e.g. a recovered entry).
+                        let confirmed_locked = collateral_locked == Some(true);
+                        if entry.reg_txid.is_some() || confirmed_locked {
                             // Already registered — show Deregister button
                             if ui
                                 .button(RichText::new("🔓 Deregister").color(Color32::from_rgb(220, 80, 80)))
