@@ -1289,7 +1289,9 @@ impl AppState {
             }
 
             ServiceEvent::PeersDiscovered(peers) => {
-                self.peers = peers;
+                if !peers.is_empty() {
+                    self.peers = peers;
+                }
             }
 
             ServiceEvent::PeerHeightsUpdated(heights) => {

@@ -1791,25 +1791,26 @@ pub async fn run(
                     UiEvent::SwitchPeer { endpoint } => {
                         log::info!("📌 User manually switching to peer: {}", endpoint);
 
-                        // Genesis guard: reject peers on a different chain.
+                        // Use cached discovery data when the peer is already known —
+                        // avoids opening new TLS connections just for the safety checks.
+                        let cached = state.last_peers.iter().find(|p| p.endpoint == endpoint).cloned();
+
+                        // Genesis guard: use cached result; only probe if unknown.
                         {
                             let expected = if state.network_type == NetworkType::Testnet {
                                 TESTNET_GENESIS_HASH
                             } else {
                                 MAINNET_GENESIS_HASH
                             };
-                            let probe = MasternodeClient::new(endpoint.clone(), rpc_credentials.clone());
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
-                                probe.get_genesis_hash(),
-                            )
-                            .await
-                            {
-                                Ok(Ok(hash)) if hash != expected => {
+                            let cached_genesis = cached.as_ref().and_then(|p| p.genesis_ok);
+                            match cached_genesis {
+                                Some(true) => {
+                                    // Already verified by discovery — skip the RPC.
+                                }
+                                Some(false) => {
                                     log::warn!(
-                                        "⚠ Refusing switch to {}: incompatible genesis {}…",
-                                        endpoint,
-                                        &hash[..16.min(hash.len())],
+                                        "⚠ Refusing switch to {}: cached discovery shows incompatible genesis",
+                                        endpoint
                                     );
                                     let _ = state.svc_tx.send(ServiceEvent::Error(format!(
                                         "Peer {} is on a different chain (genesis mismatch). Choose a compatible peer.",
@@ -1817,17 +1818,37 @@ pub async fn run(
                                     )));
                                     continue;
                                 }
-                                Ok(Err(e)) => {
-                                    log::warn!("⚠ Cannot check genesis for {}: {}", endpoint, e);
-                                    // Don't block the switch on a failed genesis check.
+                                None => {
+                                    // Unknown peer (not in discovery list) — probe directly.
+                                    let probe = MasternodeClient::new(endpoint.clone(), rpc_credentials.clone());
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(5),
+                                        probe.get_genesis_hash(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(hash)) if hash != expected => {
+                                            log::warn!(
+                                                "⚠ Refusing switch to {}: incompatible genesis {}…",
+                                                endpoint,
+                                                &hash[..16.min(hash.len())],
+                                            );
+                                            let _ = state.svc_tx.send(ServiceEvent::Error(format!(
+                                                "Peer {} is on a different chain (genesis mismatch). Choose a compatible peer.",
+                                                endpoint
+                                            )));
+                                            continue;
+                                        }
+                                        Ok(Err(e)) => {
+                                            log::warn!("⚠ Cannot check genesis for {}: {}", endpoint, e);
+                                        }
+                                        _ => {}
+                                    }
                                 }
-                                _ => {}
                             }
                         }
 
-                        // Consensus guard: compare the target peer's height to the best
-                        // known height across all discovered peers. Reject the switch if
-                        // the target lags by more than CONSENSUS_LAG blocks.
+                        // Consensus guard: use cached block height when available.
                         let best_known = state
                             .last_peers
                             .iter()
@@ -1837,14 +1858,34 @@ pub async fn run(
                             .unwrap_or(0);
 
                         if best_known > 0 {
-                            let probe = MasternodeClient::new(endpoint.clone(), rpc_credentials.clone());
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
-                                probe.get_block_height(),
-                            )
-                            .await
-                            {
-                                Ok(Ok(height)) if best_known.saturating_sub(height) > CONSENSUS_LAG => {
+                            let cached_height = cached.as_ref().and_then(|p| p.block_height);
+                            let peer_height = if let Some(h) = cached_height {
+                                // Use the height we already know from discovery.
+                                Some(h)
+                            } else {
+                                // Unknown peer — must probe.
+                                let probe = MasternodeClient::new(endpoint.clone(), rpc_credentials.clone());
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_secs(5),
+                                    probe.get_block_height(),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(h)) => Some(h),
+                                    Ok(Err(e)) => {
+                                        log::warn!("⚠ Cannot reach peer {} for consensus check: {}", endpoint, e);
+                                        let _ = state.svc_tx.send(ServiceEvent::Error(format!(
+                                            "Cannot reach peer {}: {}. Choose a different peer.",
+                                            endpoint, e
+                                        )));
+                                        continue;
+                                    }
+                                    Err(_) => None, // timeout — give benefit of the doubt
+                                }
+                            };
+
+                            if let Some(height) = peer_height {
+                                if best_known.saturating_sub(height) > CONSENSUS_LAG {
                                     let lag = best_known - height;
                                     log::warn!(
                                         "⚠ Refusing switch to {}: height {} is {} blocks behind consensus ({})",
@@ -1854,20 +1895,7 @@ pub async fn run(
                                         "Peer {} is out of consensus: {} blocks behind (at {}, network is at {}). Choose a different peer.",
                                         endpoint, lag, height, best_known
                                     )));
-                                    // Abort the switch — do not fall through.
                                     continue;
-                                }
-                                Ok(Err(e)) => {
-                                    log::warn!("⚠ Cannot reach peer {} for consensus check: {}", endpoint, e);
-                                    let _ = state.svc_tx.send(ServiceEvent::Error(format!(
-                                        "Cannot reach peer {}: {}. Choose a different peer.",
-                                        endpoint, e
-                                    )));
-                                    continue;
-                                }
-                                Ok(Ok(_)) | Err(_) => {
-                                    // height is within consensus, or the timeout fired (give
-                                    // the peer the benefit of the doubt and proceed).
                                 }
                             }
                         }
@@ -3129,13 +3157,17 @@ async fn discover_peers(
 
     // Send a preliminary peer update immediately so the UI stops showing
     // "discovering peers" and shows the initial set while gossip runs.
+    // Skip if empty — an empty send would flash "Discovering peers..." when
+    // all probes are temporarily failing (e.g. during a re-discovery cycle).
     {
         let mut preliminary = peer_infos.clone();
         for p in &mut preliminary {
             p.is_active = p.is_healthy && p.endpoint == active_endpoint;
         }
         preliminary.extend(wrong_chain_display.iter().cloned());
-        let _ = svc_tx.send(ServiceEvent::PeersDiscovered(preliminary));
+        if !preliminary.is_empty() {
+            let _ = svc_tx.send(ServiceEvent::PeersDiscovered(preliminary));
+        }
     }
 
     // Gossip discovery: ask ALL healthy peers for their known masternodes.

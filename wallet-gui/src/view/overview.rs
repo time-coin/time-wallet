@@ -33,8 +33,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let has_active_peer = state.peers.iter().any(|p| p.is_active && p.is_healthy);
             let ws_label = if state.ws_connected {
                 egui::RichText::new("Connected").color(egui::Color32::GREEN)
+            } else if has_active_peer || state.syncing {
+                egui::RichText::new("Connecting…").color(egui::Color32::from_rgb(255, 180, 0))
             } else {
                 egui::RichText::new("Disconnected").color(egui::Color32::RED)
             };
@@ -204,7 +207,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
                                     .color(egui::Color32::WHITE),
                             );
                         });
-                } else if mn_bal > 0 {
+                } else if mn_bal > 0 && state.ws_connected {
                     egui::Frame::new()
                         .fill(theme::GREEN)
                         .corner_radius(4.0)
