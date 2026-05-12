@@ -243,14 +243,16 @@ pub fn render(
         let mut deregister_event: Option<UiEvent> = None;
 
         for entry in &state.masternode_entries {
-            // Resolve collateral amount: live UTXO first, cached amount as fallback.
-            let live_amount = state
+            // Resolve collateral UTXO: live data first, cached amount as fallback.
+            let collateral_utxo = state
                 .utxos
                 .iter()
-                .find(|u| u.txid == entry.collateral_txid && u.vout == entry.collateral_vout)
-                .map(|u| u.amount);
+                .find(|u| u.txid == entry.collateral_txid && u.vout == entry.collateral_vout);
+            let live_amount = collateral_utxo.map(|u| u.amount);
             let effective_amount = live_amount.or(entry.collateral_amount);
             let tier = effective_amount.and_then(masternode_tier_from_satoshis);
+            // None = UTXO not yet synced; Some(true) = locked; Some(false) = spendable/unlocked.
+            let collateral_locked = collateral_utxo.map(|u| !u.spendable);
 
             egui::Frame::group(ui.style())
                 .inner_margin(10.0)
@@ -273,6 +275,33 @@ pub fn render(
                                             .on_hover_text("Collateral UTXO not yet fetched — tier will appear after the next sync");
                                     }
                                 }
+                            }
+                        }
+                        // Collateral locked badge — derived from spendable field on the live UTXO.
+                        match collateral_locked {
+                            Some(true) => {
+                                ui.label(
+                                    RichText::new("🔒 Locked")
+                                        .color(Color32::from_rgb(80, 200, 120))
+                                        .size(12.0),
+                                )
+                                .on_hover_text(
+                                    "Collateral is locked by the masternode — not spendable while active.",
+                                );
+                            }
+                            Some(false) => {
+                                ui.label(
+                                    RichText::new("🔓 Not Locked")
+                                        .color(Color32::from_rgb(255, 160, 40))
+                                        .size(12.0),
+                                )
+                                .on_hover_text(
+                                    "Collateral UTXO is spendable — the masternode has not locked it.\n\
+                                     Register on-chain or check your masternode server.",
+                                );
+                            }
+                            None => {
+                                // UTXO not yet in the synced set — show nothing; will appear after sync.
                             }
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -363,6 +392,10 @@ pub fn render(
                                     state.mn_reg_alias = None;
                                 } else {
                                     state.mn_reg_alias = Some(entry.alias.clone());
+                                    // Pre-fill IP from stored record
+                                    if let Some(ref ip) = entry.registered_ip {
+                                        state.mn_reg_ip = ip.clone();
+                                    }
                                     // Pre-fill payout address from entry if available
                                     if let Some(ref pa) = entry.payout_address {
                                         state.mn_reg_payout = pa.clone();
