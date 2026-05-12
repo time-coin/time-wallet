@@ -27,6 +27,9 @@ fn open_conf_file(path: std::path::PathBuf) {
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiEvent>) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
     ui.heading("🔧 Tools");
     ui.add_space(10.0);
 
@@ -129,7 +132,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSend
 
     // -- Collateral Lock Audit --
     ui.group(|ui| {
-        ui.label(egui::RichText::new("Collateral Lock Audit").strong().size(16.0));
+        egui::CollapsingHeader::new(
+            egui::RichText::new("Collateral Lock Audit").strong().size(16.0),
+        )
+        .default_open(false)
+        .show(ui, |ui| {
         ui.add_space(4.0);
 
         let locked_utxos: Vec<_> = state.utxos.iter().filter(|u| !u.spendable).collect();
@@ -187,18 +194,27 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSend
                             }
                             None => {
                                 has_phantom = true;
-                                ui.label(
-                                    egui::RichText::new("⚠ No entry — phantom lock")
-                                        .color(egui::Color32::from_rgb(255, 80, 80))
-                                        .strong(),
-                                )
-                                .on_hover_text(
-                                    "This UTXO is locked as masternode collateral on-chain \
-                                     but has no entry in your wallet.\n\
-                                     It may be from a node registered by another wallet \
-                                     or a deleted entry. You can add it back using the \
-                                     TXID and vout above.",
-                                );
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("⚠ No entry — phantom lock")
+                                            .color(egui::Color32::from_rgb(255, 80, 80))
+                                            .strong(),
+                                    );
+                                    // Full txid on its own line so it can be copied
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(&u.txid)
+                                                .monospace()
+                                                .small()
+                                                .color(egui::Color32::GRAY),
+                                        );
+                                        if ui.small_button("📋 Copy").clicked() {
+                                            if let Ok(mut cb) = arboard::Clipboard::new() {
+                                                let _ = cb.set_text(u.txid.clone());
+                                            }
+                                        }
+                                    });
+                                });
                             }
                         }
                         ui.end_row();
@@ -218,6 +234,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSend
                 );
             }
         }
+        }); // end CollapsingHeader
     });
 
     ui.add_space(16.0);
@@ -291,4 +308,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSend
     if let Some(ref msg) = state.error {
         ui.label(egui::RichText::new(format!("❌ {msg}")).color(egui::Color32::RED));
     }
+    ui.add_space(16.0);
+    }); // end ScrollArea
 }
