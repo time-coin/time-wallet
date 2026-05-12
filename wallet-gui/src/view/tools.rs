@@ -127,6 +127,101 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSend
 
     ui.add_space(16.0);
 
+    // -- Collateral Lock Audit --
+    ui.group(|ui| {
+        ui.label(egui::RichText::new("Collateral Lock Audit").strong().size(16.0));
+        ui.add_space(4.0);
+
+        let locked_utxos: Vec<_> = state.utxos.iter().filter(|u| !u.spendable).collect();
+
+        if locked_utxos.is_empty() {
+            if state.utxos.is_empty() {
+                ui.label(egui::RichText::new("No UTXO data yet — sync first.").weak());
+            } else {
+                ui.label(egui::RichText::new("✅ No locked collateral UTXOs found.").color(egui::Color32::GREEN));
+            }
+        } else {
+            ui.label(format!(
+                "{} locked UTXO(s) reported by the node, {} masternode entries in wallet.",
+                locked_utxos.len(),
+                state.masternode_entries.len()
+            ));
+            ui.add_space(6.0);
+
+            let mut has_phantom = false;
+            egui::Grid::new("collateral_audit_grid")
+                .num_columns(4)
+                .spacing([12.0, 4.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("TXID (short)").strong());
+                    ui.label(egui::RichText::new("Vout").strong());
+                    ui.label(egui::RichText::new("Amount").strong());
+                    ui.label(egui::RichText::new("Wallet entry").strong());
+                    ui.end_row();
+
+                    for u in &locked_utxos {
+                        let matched_entry = state.masternode_entries.iter().find(|e| {
+                            e.collateral_txid == u.txid && e.collateral_vout == u.vout
+                        });
+
+                        // Short txid for display
+                        let short_txid = if u.txid.len() >= 16 {
+                            format!("{}…{}", &u.txid[..8], &u.txid[u.txid.len()-8..])
+                        } else {
+                            u.txid.clone()
+                        };
+                        let amount_time = u.amount as f64 / 100_000_000.0;
+
+                        ui.label(egui::RichText::new(&short_txid).monospace())
+                            .on_hover_text(&u.txid);
+                        ui.label(u.vout.to_string());
+                        ui.label(format!("{:.0} TIME", amount_time));
+
+                        match matched_entry {
+                            Some(entry) => {
+                                ui.label(
+                                    egui::RichText::new(format!("✔ {}", entry.alias))
+                                        .color(egui::Color32::GREEN),
+                                );
+                            }
+                            None => {
+                                has_phantom = true;
+                                ui.label(
+                                    egui::RichText::new("⚠ No entry — phantom lock")
+                                        .color(egui::Color32::from_rgb(255, 80, 80))
+                                        .strong(),
+                                )
+                                .on_hover_text(
+                                    "This UTXO is locked as masternode collateral on-chain \
+                                     but has no entry in your wallet.\n\
+                                     It may be from a node registered by another wallet \
+                                     or a deleted entry. You can add it back using the \
+                                     TXID and vout above.",
+                                );
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+
+            if has_phantom {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "⚠ One or more locked UTXOs have no matching wallet entry. \
+                         Add the missing masternode entry (using the TXID/vout above) \
+                         to track it, or deregister the masternode on-chain to free the collateral.",
+                    )
+                    .color(egui::Color32::from_rgb(255, 160, 40))
+                    .small(),
+                );
+            }
+        }
+    });
+
+    ui.add_space(16.0);
+
     // -- Open Config Files --
     ui.group(|ui| {
         ui.label(
