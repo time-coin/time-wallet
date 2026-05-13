@@ -602,6 +602,20 @@ impl MasternodeClient {
         Ok(Some((amount_sats, address)))
     }
 
+    /// Fetch the current governance-voted fee schedule from the masternode.
+    ///
+    /// Falls back to `FeeSchedule::default()` on any error so callers can
+    /// always proceed with a sensible schedule.
+    pub async fn get_fee_schedule(&self) -> wallet::FeeSchedule {
+        match self.rpc_call("getfeeschedule", serde_json::json!([])).await {
+            Ok(val) => serde_json::from_value(val).unwrap_or_default(),
+            Err(e) => {
+                log::warn!("get_fee_schedule RPC failed (using default): {}", e);
+                wallet::FeeSchedule::default()
+            }
+        }
+    }
+
     /// Broadcast a signed transaction (hex-encoded bincode)
     pub async fn broadcast_transaction(&self, tx_hex: &str) -> Result<String, ClientError> {
         let result = self

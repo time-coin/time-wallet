@@ -4423,6 +4423,9 @@ async fn consolidate_utxos_background(
     consolidation_txids: Arc<Mutex<HashSet<String>>>,
     consolidation_active: Arc<AtomicBool>,
 ) {
+    // Fetch the live governance-voted fee schedule once before building batches.
+    let fee_schedule = client.get_fee_schedule().await;
+
     // Fetch spendable UTXOs per address and keep them grouped so that each
     // batch is sent back to the same address the inputs came from.
     let mut utxos_by_addr: std::collections::BTreeMap<String, Vec<crate::masternode_client::Utxo>> =
@@ -4524,13 +4527,12 @@ async fn consolidate_utxos_background(
             }
 
             let batch_total: u64 = valid_utxos.iter().map(|u| u.amount).sum();
-            // Calculate fee on the send_amount (output), not batch_total (input),
-            // because the masternode validates fee against the send amount.
-            // Iterate to converge since fee depends on send_amount which depends on fee.
-            let mut fee = wallet::calculate_fee(batch_total);
+            // Use the live fee schedule fetched from the masternode so that
+            // governance-voted fee changes are honoured.
+            let mut fee = fee_schedule.calculate_fee(batch_total);
             let mut send_amount = batch_total.saturating_sub(fee);
             for _ in 0..5 {
-                let required = wallet::calculate_fee(send_amount);
+                let required = fee_schedule.calculate_fee(send_amount);
                 if required <= fee {
                     break;
                 }
@@ -4538,10 +4540,13 @@ async fn consolidate_utxos_background(
                 send_amount = batch_total.saturating_sub(fee);
             }
 
-            if send_amount == 0 {
+            // Masternode enforces a 1 TIME (100_000_000 satoshis) minimum output value.
+            const MIN_SEND: u64 = 100_000_000;
+            if send_amount < MIN_SEND {
                 log::info!(
-                    "Consolidation batch {}: skipped — batch value {} <= min fee {}",
+                    "Consolidation batch {}: skipped — send_amount {} < 1 TIME minimum (batch_total={}, fee={})",
                     batch_idx,
+                    send_amount,
                     batch_total,
                     fee
                 );
