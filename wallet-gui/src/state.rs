@@ -416,8 +416,15 @@ impl AppState {
             if matches!(tx.status, TransactionStatus::Declined) {
                 continue;
             }
-            // Consolidation transactions move coins between our own addresses —
-            // they don't change total balance and must not be double-counted.
+            // Consolidation sends are self-sends: only the fee leaves the wallet.
+            // Deduct just the fee so the balance decreases correctly after each
+            // consolidation without double-counting the full sent amount.
+            if tx.is_consolidation && tx.is_send {
+                bal -= tx.fee as i64;
+                continue;
+            }
+            // Consolidation receives (change back to own address) are already
+            // accounted for by the fee deduction above — skip them too.
             if tx.is_consolidation {
                 continue;
             }

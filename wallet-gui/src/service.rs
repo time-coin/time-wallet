@@ -2459,7 +2459,7 @@ pub async fn run(
                             .lock()
                             .unwrap()
                             .contains(&notification.txid);
-                        let is_change = if is_consolidation {
+                        let is_change = if is_consolidation || send_record.as_ref().map_or(false, |sr| sr.is_consolidation) {
                             true // consolidation output — always change
                         } else if let Some(ref sr) = send_record {
                             // It's from a txid we sent — change unless it's send-to-self receive
@@ -2527,7 +2527,7 @@ pub async fn run(
                             .lock()
                             .unwrap()
                             .contains(&notif.txid);
-                        let is_change = if is_consolidation {
+                        let is_change = if is_consolidation || send_record.as_ref().map_or(false, |sr| sr.is_consolidation) {
                             true // consolidation output — always change
                         } else if let Some(ref sr) = send_record {
                             let is_self_send = state.addresses.contains(&sr.address);
