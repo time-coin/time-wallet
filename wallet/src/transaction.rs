@@ -123,7 +123,7 @@ impl Transaction {
     /// Create a new transaction
     pub fn new() -> Self {
         Self {
-            version: 1,
+            version: 2,
             inputs: Vec::new(),
             outputs: Vec::new(),
             lock_time: 0,
@@ -167,8 +167,11 @@ impl Transaction {
         hex::encode(self.hash())
     }
 
-    /// Create signature message for a specific input (matches masternode)
+    /// Create signature message for a specific input (matches masternode).
+    /// v1: txid || input_index || outputs_hash
+    /// v2: CHAIN_ID(4 LE) || txid || input_index || outputs_hash
     fn create_signature_message(&self, input_idx: usize) -> Vec<u8> {
+        const CHAIN_ID: u32 = 1;
         let mut signing_tx = self.clone();
         for input in &mut signing_tx.inputs {
             input.script_sig = vec![];
@@ -176,6 +179,9 @@ impl Transaction {
         let tx_hash = signing_tx.hash();
 
         let mut message = Vec::new();
+        if self.version >= 2 {
+            message.extend_from_slice(&CHAIN_ID.to_le_bytes());
+        }
         message.extend_from_slice(&tx_hash);
         message.extend_from_slice(&(input_idx as u32).to_le_bytes());
         let outputs_bytes = bincode::serialize(&self.outputs).expect("Failed to serialize outputs");
@@ -279,7 +285,7 @@ mod tests {
     #[test]
     fn test_transaction_creation() {
         let tx = Transaction::new();
-        assert_eq!(tx.version, 1);
+        assert_eq!(tx.version, 2);
         assert!(tx.inputs.is_empty());
         assert!(tx.outputs.is_empty());
     }
