@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-05-15
+
+### Added
+- **Collateral lock audit** — Tools screen now shows a collateral audit panel (behind a collapsing header) listing all locked UTXOs with their masternode assignment and lock status
+- **Collateral locked badge** — Masternode list entries show a locked badge; Register On-Chain pre-fills the node IP from the stored entry
+
+### Changed
+- **Incremental startup sync** — Eliminated full chain rescan on startup; wallet now performs an incremental sync so the UI is responsive within seconds
+- **Parallel peer probing** — Peer probe sub-checks are now parallelised and deduplicate TLS handshakes, cutting connection setup time significantly
+- **Parallel UTXO and transaction scans** — UTXO and transaction syncs are now parallelised after peer connect, eliminating the post-connect delay
+
+### Fixed
+- **Consolidation balance inflation after UTXO finalization** — Consolidation outputs are now correctly excluded until they reach masternode finality, preventing double-counting
+- **Broken transactions (v2 signing)** — Upgraded to v2 transaction signing format; previously signed transactions were rejected by the masternode due to format mismatch
+- **Live fee schedule for consolidation** — Consolidation now fetches the current fee schedule from the masternode instead of using a hardcoded value
+- **Deregistration used wrong key** — Deregistration now signs with the collateral owner key; the Masternodes screen correctly shows a "Deregister" button for locked entries
+- **Tools screen not scrollable** — Tools screen is now scrollable; collateral audit is hidden behind a collapsing header to keep the layout clean
+- **Peer list flicker and verified badge** — Fixed flicker on peer list refresh, stale connecting state, slow peer switching, and incorrect verified badge display
+- **Peers rejected on genesis chain mismatch** — Peers reporting an incompatible genesis chain are now rejected early instead of causing downstream sync errors
+
 ## [0.6.4] - 2026-04-09
 
 ### Added

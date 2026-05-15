@@ -5063,7 +5063,7 @@ checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
 
 [[package]]
 name = "time-core"
-version = "0.6.4"
+version = "0.6.7"
 dependencies = [
  "bincode",
  "chrono",
@@ -5094,7 +5094,7 @@ dependencies = [
 
 [[package]]
 name = "time-mempool"
-version = "0.6.4"
+version = "0.6.7"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -5102,13 +5102,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "sysinfo",
- "time-core 0.6.4",
+ "time-core 0.6.7",
  "tokio",
 ]
 
 [[package]]
 name = "time-network"
-version = "0.6.4"
+version = "0.6.7"
 dependencies = [
  "bincode",
  "chrono",
@@ -5123,7 +5123,7 @@ dependencies = [
  "sha2",
  "socket2",
  "thiserror 2.0.17",
- "time-core 0.6.4",
+ "time-core 0.6.7",
  "time-mempool",
  "tokio",
  "tracing",
@@ -5592,7 +5592,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.6.4"
+version = "0.6.7"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -5613,7 +5613,7 @@ dependencies = [
  "sha2",
  "sled",
  "thiserror 2.0.17",
- "time-core 0.6.4",
+ "time-core 0.6.7",
  "time-mempool",
  "tokio",
  "zeroize",
@@ -5621,7 +5621,7 @@ dependencies = [
 
 [[package]]
 name = "wallet-gui"
-version = "0.6.4"
+version = "0.6.7"
 dependencies = [
  "aes-gcm",
  "arboard",

@@ -10,7 +10,7 @@ default-members = ["wallet-gui"]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.4"
+version = "0.6.7"
 edition = "2021"
 authors = ["TIME Coin Contributors"]
 license = "BUSL-1.1"
