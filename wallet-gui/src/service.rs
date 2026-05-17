@@ -82,6 +82,7 @@ pub async fn run(
         wallet: None,
         wallet_db,
         addresses: Vec::new(),
+        address_indices: Vec::new(),
         network_type,
         config: config.clone(),
         ws_event_tx,
@@ -1162,6 +1163,7 @@ pub async fn run(
                                 })
                                 .collect();
                             state.addresses = raw_addrs;
+                            state.address_indices = db_indices.clone();
 
                             // Send updated masternode entries if any amounts were backfilled.
                             if mn_updated {
@@ -1322,6 +1324,7 @@ pub async fn run(
                             }
 
                             state.addresses = raw_addrs;
+                            state.address_indices = found_indices;
                             log::info!(
                                 "🔄 Rebuilt address list: {} addresses found (scanned 0..{})",
                                 state.addresses.len(),
@@ -1343,11 +1346,11 @@ pub async fn run(
 
                     UiEvent::GenerateAddress => {
                         if let Some(ref mut wm) = state.wallet {
-                            match wm.get_next_address() {
-                                Ok(addr) => {
-                                    let index = state.addresses.len();
+                            match wm.generate_new_address_with_index() {
+                                Ok((addr, hd_index)) => {
                                     state.addresses.push(addr.clone());
-                                    let label = format!("Address #{}", index);
+                                    state.address_indices.push(hd_index);
+                                    let label = format!("Address #{}", hd_index);
                                     if let Some(ref db) = state.wallet_db {
                                         let now = chrono::Utc::now().timestamp();
                                         let contact = AddressContact {
@@ -1359,7 +1362,7 @@ pub async fn run(
                                             notes: None,
                                             is_default: false,
                                             is_owned: true,
-                                            derivation_index: Some(index as u32),
+                                            derivation_index: Some(hd_index),
                                             created_at: now,
                                             updated_at: now,
                                         };
@@ -1395,13 +1398,16 @@ pub async fn run(
                                     "Cannot delete the primary address.".to_string(),
                                 ));
                             }
-                            Some(_) => {
+                            Some(pos) => {
                                 if let Some(ref db) = state.wallet_db {
                                     if let Err(e) = db.delete_contact(&address) {
                                         log::warn!("Failed to delete address from DB: {}", e);
                                     }
                                 }
                                 state.addresses.retain(|a| a != &address);
+                                if pos < state.address_indices.len() {
+                                    state.address_indices.remove(pos);
+                                }
                                 let _ = state.svc_tx.send(ServiceEvent::AddressDeleted(address));
                             }
                             None => {}
@@ -1581,17 +1587,21 @@ pub async fn run(
                         // Re-persist owned addresses
                         if let Some(ref db) = state.wallet_db {
                             if state.wallet.is_some() {
-                                for (i, addr) in state.addresses.iter().enumerate() {
+                                for (pos, addr) in state.addresses.iter().enumerate() {
+                                    let hd_index = state.address_indices
+                                        .get(pos)
+                                        .copied()
+                                        .unwrap_or(pos as u32);
                                     let contact = AddressContact {
                                         address: addr.clone(),
-                                        label: format!("Address {}", i + 1),
+                                        label: format!("Address #{}", hd_index),
                                         name: None,
                                         email: None,
                                         phone: None,
                                         notes: None,
-                                        is_default: i == 0,
+                                        is_default: hd_index == 0,
                                         is_owned: true,
-                                        derivation_index: Some(i as u32),
+                                        derivation_index: Some(hd_index),
                                         created_at: chrono::Utc::now().timestamp(),
                                         updated_at: chrono::Utc::now().timestamp(),
                                     };
@@ -2459,7 +2469,7 @@ pub async fn run(
                             .lock()
                             .unwrap()
                             .contains(&notification.txid);
-                        let is_change = if is_consolidation || send_record.as_ref().map_or(false, |sr| sr.is_consolidation) {
+                        let is_change = if is_consolidation || send_record.as_ref().is_some_and(|sr| sr.is_consolidation) {
                             true // consolidation output — always change
                         } else if let Some(ref sr) = send_record {
                             // It's from a txid we sent — change unless it's send-to-self receive
@@ -2527,7 +2537,7 @@ pub async fn run(
                             .lock()
                             .unwrap()
                             .contains(&notif.txid);
-                        let is_change = if is_consolidation || send_record.as_ref().map_or(false, |sr| sr.is_consolidation) {
+                        let is_change = if is_consolidation || send_record.as_ref().is_some_and(|sr| sr.is_consolidation) {
                             true // consolidation output — always change
                         } else if let Some(ref sr) = send_record {
                             let is_self_send = state.addresses.contains(&sr.address);
@@ -2744,6 +2754,7 @@ pub async fn run(
                                             }
                                             // Update service address list.
                                             state.addresses.push(addr.clone());
+                                            state.address_indices.push(*idx);
                                             // Notify UI.
                                             let _ = state.svc_tx.send(
                                                 ServiceEvent::AddressGenerated(AddressInfo {
@@ -3448,6 +3459,11 @@ struct ServiceState {
     wallet: Option<WalletManager>,
     wallet_db: Option<WalletDb>,
     addresses: Vec<String>,
+    /// HD derivation index for each slot in `addresses`.  Always kept in
+    /// lock-step with `addresses` so any code that needs the real BIP-44
+    /// index (e.g. saving a sled contact, re-signing a TX) never has to
+    /// guess by using the vector position.
+    address_indices: Vec<u32>,
     network_type: NetworkType,
     config: Config,
     ws_event_tx: mpsc::UnboundedSender<WsEvent>,
@@ -3544,7 +3560,7 @@ impl ServiceState {
 
                 // Build the active address set.
                 // First run: no DB entries yet — create the primary address and persist it.
-                let raw_addrs: Vec<String> = if db_indices.is_empty() {
+                let (raw_addrs, active_indices): (Vec<String>, Vec<u32>) = if db_indices.is_empty() {
                     // Flag that we should scan for more addresses once connected.
                     self.pending_address_scan = true;
                     match wm.get_next_address() {
@@ -3565,31 +3581,28 @@ impl ServiceState {
                                     updated_at: now,
                                 });
                             }
-                            vec![addr]
+                            (vec![addr], vec![0])
                         }
                         Err(e) => {
                             log::error!("Failed to derive primary address: {}", e);
-                            vec![]
+                            (vec![], vec![])
                         }
                     }
                 } else {
                     // Normal run — derive only the indices present in the DB.
-                    db_indices
+                    let pairs: Vec<(String, u32)> = db_indices
                         .iter()
-                        .filter_map(|&i| wm.derive_address(i).ok())
-                        .collect()
+                        .filter_map(|&i| wm.derive_address(i).ok().map(|a| (a, i)))
+                        .collect();
+                    pairs.into_iter().unzip()
                 };
 
                 self.addresses = raw_addrs.clone();
+                self.address_indices = active_indices.clone();
                 // Force a full transaction rescan whenever a wallet is (re)loaded.
                 self.last_synced_height.store(0, Ordering::Relaxed);
 
                 // Build signing keys only for the active address indices.
-                let active_indices: Vec<u32> = if db_indices.is_empty() {
-                    vec![0]
-                } else {
-                    db_indices.clone()
-                };
                 // Collect (address, pubkey) pairs for node pre-registration.
                 // Must happen before `wm` is moved into self.wallet.
                 let addr_pubkeys: Vec<(String, [u8; 32])> = active_indices
