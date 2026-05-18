@@ -858,10 +858,9 @@ impl MasternodeClient {
         let result = self
             .rpc_call("getblockhash", serde_json::json!([0u64]))
             .await?;
-        result
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| ClientError::InvalidResponse("getblockhash returned non-string".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| {
+            ClientError::InvalidResponse("getblockhash returned non-string".to_string())
+        })
     }
 
     /// Attempt to determine this masternode's tier.

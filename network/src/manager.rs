@@ -1569,10 +1569,8 @@ impl PeerManager {
                     finalized_at,
                 } => {
                     // Pair transactions with their finalization timestamps
-                    let paired: Vec<(time_core::Transaction, i64)> = transactions
-                        .into_iter()
-                        .zip(finalized_at)
-                        .collect();
+                    let paired: Vec<(time_core::Transaction, i64)> =
+                        transactions.into_iter().zip(finalized_at).collect();
                     return Ok(paired);
                 }
                 other => {

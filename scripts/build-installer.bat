@@ -75,15 +75,33 @@ set "PNG_FILE=%REPO_ROOT%\wallet-gui\assets\logo.png"
 if not exist "!ICO_FILE!" (
     if exist "!PNG_FILE!" (
         echo    Converting logo.png to logo.ico...
-        powershell -Command ^
-            "Add-Type -AssemblyName System.Drawing; " ^
-            "$png = [System.Drawing.Image]::FromFile('%PNG_FILE%'); " ^
-            "$icon = [System.Drawing.Icon]::FromHandle(([System.Drawing.Bitmap]$png).GetHicon()); " ^
-            "$fs = [System.IO.File]::Create('%ICO_FILE%'); " ^
-            "$icon.Save($fs); " ^
-            "$fs.Close(); " ^
-            "$icon.Dispose(); " ^
-            "$png.Dispose()"
+        powershell -NoProfile -Command ^
+            "Add-Type -AssemblyName System.Drawing;" ^
+            "$png = New-Object System.Drawing.Bitmap('%PNG_FILE%');" ^
+            "$sizes = @(16,32,48,256);" ^
+            "$images = @();" ^
+            "foreach ($s in $sizes) {" ^
+            "    $bmp = New-Object System.Drawing.Bitmap($s,$s);" ^
+            "    $g = [System.Drawing.Graphics]::FromImage($bmp);" ^
+            "    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;" ^
+            "    $g.DrawImage($png,0,0,$s,$s); $g.Dispose();" ^
+            "    $ms = New-Object System.IO.MemoryStream;" ^
+            "    $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);" ^
+            "    $images += ,($ms.ToArray()); $ms.Dispose(); $bmp.Dispose();" ^
+            "};" ^
+            "$png.Dispose();" ^
+            "$wr = New-Object System.IO.BinaryWriter([System.IO.File]::Create('%ICO_FILE%'));" ^
+            "$wr.Write([uint16]0); $wr.Write([uint16]1); $wr.Write([uint16]$sizes.Count);" ^
+            "$off = 6 + $sizes.Count * 16;" ^
+            "for ($i=0;$i -lt $sizes.Count;$i++) {" ^
+            "    $d=$sizes[$i]; $dim=if($d-eq 256){0}else{$d};" ^
+            "    $wr.Write([byte]$dim);$wr.Write([byte]$dim);$wr.Write([byte]0);$wr.Write([byte]0);" ^
+            "    $wr.Write([uint16]1);$wr.Write([uint16]32);" ^
+            "    $wr.Write([uint32]$images[$i].Length);$wr.Write([uint32]$off);" ^
+            "    $off+=$images[$i].Length;" ^
+            "};" ^
+            "foreach ($img in $images){$wr.Write($img)};" ^
+            "$wr.Close()"
         if exist "!ICO_FILE!" (
             echo [OK] Created logo.ico
         ) else (
@@ -116,7 +134,7 @@ echo ============================================
 echo   Installer built successfully!
 echo ============================================
 echo.
-echo   Output: installer\TIMECoinWallet-Setup-0.6.0.exe
+echo   Output: installer\TIMECoinWallet-Setup-0.6.7.exe
 echo.
 pause
 exit /b 0

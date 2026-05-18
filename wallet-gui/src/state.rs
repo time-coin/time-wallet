@@ -1504,10 +1504,7 @@ impl AppState {
             }
 
             ServiceEvent::MasternodeDeregistered { alias } => {
-                self.success = Some(format!(
-                    "Masternode '{}' deregistration broadcast.",
-                    alias
-                ));
+                self.success = Some(format!("Masternode '{}' deregistration broadcast.", alias));
             }
 
             ServiceEvent::MasternodePayoutUpdated {

@@ -2945,7 +2945,11 @@ async fn discover_peers(
     let mut handles = Vec::new();
     for endpoint in endpoints.clone() {
         let creds = rpc_credentials.clone();
-        let expected_genesis = if is_testnet { TESTNET_GENESIS_HASH } else { MAINNET_GENESIS_HASH };
+        let expected_genesis = if is_testnet {
+            TESTNET_GENESIS_HASH
+        } else {
+            MAINNET_GENESIS_HASH
+        };
         handles.push(tokio::spawn(async move {
             // Always probe the https:// form first; plain-http form is the fallback.
             let https_ep = if endpoint.starts_with("http://") {
@@ -3250,7 +3254,11 @@ async fn discover_peers(
         let mut gossip_handles = Vec::new();
         for ep in new_endpoints {
             let creds = rpc_credentials.clone();
-            let expected_genesis = if is_testnet { TESTNET_GENESIS_HASH } else { MAINNET_GENESIS_HASH };
+            let expected_genesis = if is_testnet {
+                TESTNET_GENESIS_HASH
+            } else {
+                MAINNET_GENESIS_HASH
+            };
             gossip_handles.push(tokio::spawn(async move {
                 // Gossip peers are built as https://; fall back to http:// like the initial probe.
                 let http_ep = ep.replacen("https://", "http://", 1);
@@ -3335,10 +3343,9 @@ async fn discover_peers(
                             std::time::Duration::from_secs(3),
                             tier_client.get_tier(),
                         ),
-                        tokio::time::timeout(
-                            std::time::Duration::from_secs(3),
-                            async move { genesis_client.get_genesis_hash().await },
-                        ),
+                        tokio::time::timeout(std::time::Duration::from_secs(3), async move {
+                            genesis_client.get_genesis_hash().await
+                        },),
                     );
 
                     let ws_available = ws_res.map(|r| r.is_ok()).unwrap_or(false);
@@ -3560,7 +3567,8 @@ impl ServiceState {
 
                 // Build the active address set.
                 // First run: no DB entries yet — create the primary address and persist it.
-                let (raw_addrs, active_indices): (Vec<String>, Vec<u32>) = if db_indices.is_empty() {
+                let (raw_addrs, active_indices): (Vec<String>, Vec<u32>) = if db_indices.is_empty()
+                {
                     // Flag that we should scan for more addresses once connected.
                     self.pending_address_scan = true;
                     match wm.get_next_address() {
@@ -4146,14 +4154,13 @@ async fn build_collateral_unlock_tx(
     // owner address — using a different key will always fail with OwnerMismatch.
     let collateral_hd_index = if let Some(owner) = collateral_owner_addr {
         // Use the key that owns this specific UTXO.
-        addr_to_index
-            .get(owner)
-            .copied()
-            .ok_or_else(|| format!(
+        addr_to_index.get(owner).copied().ok_or_else(|| {
+            format!(
                 "Collateral UTXO owner address {} is not in this wallet — \
                  cannot sign deregistration",
                 owner
-            ))?
+            )
+        })?
     } else {
         // Owner address not in the DB yet (UTXO not yet synced).
         // Fall back to the first known wallet address and let the node validate.
