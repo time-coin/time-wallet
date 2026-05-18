@@ -275,6 +275,18 @@ impl eframe::App for App {
                             .size(13.0)
                             .weak(),
                     );
+                    if let Some(ref latest) = self.state.latest_version {
+                        let label = egui::RichText::new(format!("▲ v{} available", latest))
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(255, 165, 0));
+                        if ui
+                            .add(egui::Label::new(label).sense(egui::Sense::click()))
+                            .on_hover_text("Click to open Settings for the download link")
+                            .clicked()
+                        {
+                            self.state.screen = Screen::Settings;
+                        }
+                    }
 
                     // During setup, show a switch-network button below the badge
                     if !self.state.wallet_loaded {

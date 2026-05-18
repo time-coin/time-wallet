@@ -117,6 +117,12 @@ pub async fn run(
         }
     }
 
+    // Check for a newer release in the background — best-effort, failures are silent.
+    {
+        let version_tx = state.svc_tx.clone();
+        tokio::spawn(async move { check_latest_version(version_tx).await });
+    }
+
     // Kick off peer discovery in the background (skip on first run — wait for network selection)
     let mut is_testnet = config.is_testnet();
     let mut manual_endpoints = config.manual_endpoints();
@@ -4765,4 +4771,81 @@ fn parse_payment_request_json(val: &serde_json::Value) -> Option<PaymentRequest>
         timestamp: val.get("timestamp")?.as_i64()?,
         expires: val.get("expires")?.as_i64()?,
     })
+}
+
+/// Check GitHub releases for a newer wallet version and emit
+/// [`ServiceEvent::LatestVersionAvailable`] if one is found.
+///
+/// Failures are silently ignored — version checking is best-effort.
+async fn check_latest_version(svc_tx: mpsc::UnboundedSender<ServiceEvent>) {
+    const CURRENT: &str = env!("CARGO_PKG_VERSION");
+    const API_URL: &str =
+        "https://api.github.com/repos/time-coin/time-wallet/releases/latest";
+
+    let client = match reqwest::Client::builder()
+        .user_agent(concat!("time-wallet/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let resp = match client.get(API_URL).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return,
+    };
+
+    let json: serde_json::Value = match resp.json().await {
+        Ok(j) => j,
+        Err(_) => return,
+    };
+
+    let tag = match json.get("tag_name").and_then(|v| v.as_str()) {
+        Some(t) => t.trim_start_matches('v').to_string(),
+        None => return,
+    };
+
+    let url = json
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://github.com/time-coin/time-wallet/releases/latest")
+        .to_string();
+
+    if semver_is_newer(&tag, CURRENT) {
+        let _ = svc_tx.send(ServiceEvent::LatestVersionAvailable {
+            version: tag,
+            url,
+        });
+    }
+}
+
+/// Returns `true` when `candidate` is strictly newer than `current`.
+///
+/// Parses both as `MAJOR.MINOR.PATCH`; any non-numeric component is treated as 0.
+fn semver_is_newer(candidate: &str, current: &str) -> bool {
+    fn parse(s: &str) -> (u32, u32, u32) {
+        let mut parts = s.splitn(3, '.').map(|p| p.parse::<u32>().unwrap_or(0));
+        (
+            parts.next().unwrap_or(0),
+            parts.next().unwrap_or(0),
+            parts.next().unwrap_or(0),
+        )
+    }
+    parse(candidate) > parse(current)
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::semver_is_newer;
+
+    #[test]
+    fn test_semver_newer() {
+        assert!(semver_is_newer("0.7.0", "0.6.7"));
+        assert!(semver_is_newer("1.0.0", "0.6.7"));
+        assert!(semver_is_newer("0.6.8", "0.6.7"));
+        assert!(!semver_is_newer("0.6.7", "0.6.7"));
+        assert!(!semver_is_newer("0.6.6", "0.6.7"));
+        assert!(!semver_is_newer("v0.6.7", "0.6.7")); // leading 'v' stripped by caller
+    }
 }

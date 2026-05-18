@@ -285,6 +285,12 @@ pub struct AppState {
     pub chart_mode: ChartMode,
     /// When mode is SingleAddress, which address to show.
     pub chart_address_idx: usize,
+
+    // -- Version check --
+    /// Latest release version, set when a newer version than the running one is found.
+    pub latest_version: Option<String>,
+    /// GitHub release URL for `latest_version`.
+    pub latest_version_url: Option<String>,
 }
 
 impl Default for AppState {
@@ -403,6 +409,8 @@ impl Default for AppState {
             chart_months: 12,
             chart_mode: ChartMode::Total,
             chart_address_idx: 0,
+            latest_version: None,
+            latest_version_url: None,
         }
     }
 }
@@ -1563,6 +1571,11 @@ impl AppState {
             ServiceEvent::BlockRewardBreakdownLoaded(breakdown) => {
                 self.block_reward_breakdown = Some(breakdown);
                 self.block_reward_breakdown_loading = false;
+            }
+
+            ServiceEvent::LatestVersionAvailable { version, url } => {
+                self.latest_version = Some(version);
+                self.latest_version_url = Some(url);
             }
         }
     }

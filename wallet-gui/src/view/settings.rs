@@ -144,7 +144,20 @@ pub fn show(ui: &mut Ui, state: &mut AppState, ui_tx: &mpsc::UnboundedSender<UiE
         ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new("Wallet").strong());
         ui.add_space(4.0);
-        ui.label(format!("Version: {}", env!("CARGO_PKG_VERSION")));
+        ui.horizontal(|ui| {
+            ui.label(format!("Version: {}", env!("CARGO_PKG_VERSION")));
+            if let Some(ref latest) = state.latest_version {
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(format!("▲ v{} available", latest))
+                        .color(egui::Color32::from_rgb(255, 165, 0))
+                        .strong(),
+                );
+                if let Some(ref url) = state.latest_version_url {
+                    ui.hyperlink_to("Download", url.as_str());
+                }
+            }
+        });
         if state.wallet_loaded {
             ui.label(format!("Addresses: {}", state.addresses.len()));
             ui.label("Status: Loaded");

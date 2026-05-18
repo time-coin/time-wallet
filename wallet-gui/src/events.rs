@@ -473,4 +473,12 @@ pub enum ServiceEvent {
         /// Number of addresses recovered.
         count: usize,
     },
+
+    /// A newer wallet release is available.
+    LatestVersionAvailable {
+        /// Semver version string of the latest release (e.g. "0.7.0").
+        version: String,
+        /// GitHub release page URL.
+        url: String,
+    },
 }
