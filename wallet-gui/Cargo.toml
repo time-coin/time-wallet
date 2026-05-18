@@ -71,7 +71,7 @@ qrcode = { version = "0.14", default-features = false }
 
 # QR code scanning (webcam)
 nokhwa = { version = "0.10", features = ["input-native"] }
-rqrr = "0.8"
+rqrr = "0.10"
 
 # PDF generation for paper backups
 printpdf = "0.7"
