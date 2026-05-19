@@ -92,3 +92,6 @@ rfd = "0.15"
 wallet = { path = "../wallet", version = "0.6.4" }
 egui-phosphor = "0.9"
 
+[build-dependencies]
+# Embeds logo.ico into the Windows .exe resource table so the taskbar shows the icon.
+winresource = "0.1"
